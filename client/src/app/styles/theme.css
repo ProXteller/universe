@@ -1,0 +1,213 @@
+@import "tailwindcss";
+
+@theme {
+  /* ---- reset defaults we do not want used ---- */
+  --color-*: initial;
+
+  --color-white: #ffffff;
+  --color-black: #000000;
+
+  /* ---- background layers (public / default) ---- */
+  --color-void: #04050a;        /* desktop backdrop behind the phone frame */
+  --color-canvas: #090b14;      /* app background */
+  --color-surface-1: #10131f;   /* cards, list containers */
+  --color-surface-2: #171b2b;   /* inputs, raised cards, sheets */
+  --color-surface-3: #20253a;   /* chips, hover/pressed, dialogs */
+  --color-surface-4: #2b3150;   /* selected rows, slider tracks, strongest fill */
+  --color-scrim: rgb(2 3 8 / 0.64);           /* behind sheets/dialogs */
+  --color-glass: rgb(16 19 31 / 0.72);        /* glass fill */
+  --color-glass-strong: rgb(16 19 31 / 0.88); /* glass fallback / reduced transparency */
+
+  /* ---- borders ---- */
+  --color-line-subtle: rgb(255 255 255 / 0.06);  /* dividers inside cards */
+  --color-line: rgb(255 255 255 / 0.10);         /* card + input borders */
+  --color-line-strong: rgb(255 255 255 / 0.18);  /* hover borders, phone frame */
+
+  /* ---- text tiers ---- */
+  --color-ink: #f2f4fb;
+  --color-ink-2: #b6bcd2;
+  --color-ink-3: #838ba8;
+  --color-ink-4: #565e7a;
+  --color-ink-inverse: #090b14;
+
+  /* ---- brand: Aurora (public world) ---- */
+  --color-brand-200: #d6ccff;
+  --color-brand-300: #bcacff;
+  --color-brand-400: #a08bff;   /* links / accent text on dark */
+  --color-brand-500: #7c5cff;   /* icons, rings, indicators */
+  --color-brand-600: #6d4ff2;   /* filled buttons (white text 5.2:1) */
+  --color-brand-700: #5a3cd9;   /* pressed */
+  --color-aurora-violet: #8b5cff;
+  --color-aurora-azure: #5b7cff;
+  --color-aurora-cyan: #22d3ee;
+  --color-aurora-mint: #5eead4;
+  --color-aurora-orchid: #c04dff;   /* backdrop blobs only */
+
+  /* ---- incognito: Phosphor (Buzz world) ---- */
+  --color-incog-200: #ecffad;
+  --color-incog-300: #e0ff85;
+  --color-incog-400: #d3fb5c;   /* accent text on incog canvas */
+  --color-incog-500: #c5f53b;   /* fills, indicators */
+  --color-incog-600: #a6d822;   /* pressed */
+  --color-incog-700: #7da912;
+  --color-incog-ink: #0c1400;   /* text on Phosphor fills */
+  --color-incog-canvas: #070908;
+  --color-incog-surface-1: #0e120f;
+  --color-incog-surface-2: #151b16;
+  --color-incog-surface-3: #1d261f;
+  --color-incog-surface-4: #28342a;
+  --color-incog-down: #ff8a65;  /* downvote only */
+
+  /* ---- semantic slots (public defaults; remapped below) ---- */
+  --color-accent: #6d4ff2;                     /* filled interactive */
+  --color-accent-hover: #7c5cff;
+  --color-accent-press: #5a3cd9;
+  --color-accent-ink: #a08bff;                 /* accent-coloured text/icons on canvas */
+  --color-accent-soft: rgb(124 92 255 / 0.16); /* selected chip, active nav pill */
+  --color-accent-line: rgb(124 92 255 / 0.42); /* selected borders */
+  --color-on-accent: #ffffff;
+  --color-focus: #a08bff;                      /* focus ring */
+
+  /* ---- semantic status ---- */
+  --color-success: #34d399;
+  --color-success-soft: rgb(52 211 153 / 0.14);
+  --color-warning: #fbbf24;
+  --color-warning-soft: rgb(251 191 36 / 0.14);
+  --color-danger: #ff5a5f;                     /* text/icons */
+  --color-danger-fill: #d5383e;                /* destructive buttons (white text) */
+  --color-danger-soft: rgb(255 90 95 / 0.14);
+  --color-info: #38bdf8;
+  --color-info-soft: rgb(56 189 248 / 0.14);
+  --color-love: #ff3d81;                       /* like heart only */
+  --color-online: #3ddc97;                     /* presence dot only */
+  --color-gold: #f5c451;                       /* verified org tick, "free" tag */
+
+  /* ---- alias palette (index-based use) ---- */
+  --color-alias-0: #f87171;  --color-alias-1: #fb923c;  --color-alias-2: #fbbf24;
+  --color-alias-3: #a3e635;  --color-alias-4: #34d399;  --color-alias-5: #2dd4bf;
+  --color-alias-6: #38bdf8;  --color-alias-7: #93a5ff;  --color-alias-8: #e5e7eb;
+  --color-alias-9: #f0abfc;  --color-alias-10: #fb7185; --color-alias-11: #d6b98c;
+
+  /* ---- typography ---- */
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-display: "Sora Variable", "Inter Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  --text-2xs: 0.6875rem;  /* 11 */
+  --text-xs: 0.75rem;     /* 12 */
+  --text-sm: 0.8125rem;   /* 13 */
+  --text-base: 0.9375rem; /* 15 */
+  --text-md: 1rem;        /* 16 */
+  --text-lg: 1.0625rem;   /* 17 */
+  --text-xl: 1.125rem;    /* 18 */
+  --text-2xl: 1.375rem;   /* 22 */
+  --text-3xl: 1.75rem;    /* 28 */
+  --text-4xl: 2.125rem;   /* 34 */
+  --text-5xl: 2.75rem;    /* 44 */
+
+  /* ---- radii ---- */
+  --radius-xs: 6px;
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 20px;
+  --radius-xl: 28px;
+  --radius-2xl: 36px;
+  --radius-3xl: 44px;
+
+  /* ---- elevation ---- */
+  --shadow-*: initial;
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-md: 0 8px 24px -6px rgb(0 0 0 / 0.55), 0 2px 6px rgb(0 0 0 / 0.35);
+  --shadow-lg: 0 24px 64px -12px rgb(0 0 0 / 0.7), 0 8px 20px rgb(0 0 0 / 0.4);
+  --shadow-frame: 0 40px 120px -20px rgb(0 0 0 / 0.8), 0 0 0 1px rgb(255 255 255 / 0.08);
+  --shadow-glow: 0 0 0 1px var(--color-accent-line), 0 8px 28px -6px var(--color-accent-soft);
+  --inset-shadow-hairline: inset 0 1px 0 rgb(255 255 255 / 0.06);
+
+  /* ---- z-index + easing ---- */
+  --z-sticky: 10; --z-topbar: 30; --z-fab: 35; --z-nav: 40; --z-scrim: 50; --z-sheet: 51; --z-dialog: 60; --z-toast: 70;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+}
+
+/* gradients are not a Tailwind namespace: plain custom properties + utilities */
+:root {
+  --gradient-aurora: linear-gradient(135deg, #8b5cff 0%, #5b7cff 46%, #22d3ee 100%);
+  --gradient-aurora-soft: linear-gradient(135deg, rgb(139 92 255 / .22), rgb(91 124 255 / .14) 46%, rgb(34 211 238 / .18));
+  --gradient-aurora-ring: conic-gradient(from 210deg, #8b5cff, #5b7cff, #22d3ee, #5eead4, #8b5cff);
+  --gradient-phosphor: linear-gradient(135deg, #e0ff85 0%, #c5f53b 52%, #6ee7a0 100%);
+  --gradient-phosphor-soft: linear-gradient(135deg, rgb(197 245 59 / .16), rgb(110 231 160 / .08));
+  --gradient-scrim-top: linear-gradient(to bottom, rgb(0 0 0 / .58), rgb(0 0 0 / 0));
+  --gradient-scrim-bottom: linear-gradient(to top, rgb(0 0 0 / .72), rgb(0 0 0 / .28) 55%, rgb(0 0 0 / 0));
+  --gradient-hero: var(--gradient-aurora);
+  --gradient-hero-soft: var(--gradient-aurora-soft);
+
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --topbar-h: 52px;
+  --nav-h: 64px;
+  --nav-gap: 12px;
+  --nav-clearance: calc(var(--nav-h) + var(--nav-gap) * 2 + var(--safe-bottom));
+}
+@media (min-width: 768px) { :root { --safe-top: 10px; --safe-bottom: 6px; } }
+
+[data-surface="incognito"] {
+  --color-canvas: #070908;
+  --color-surface-1: #0e120f;
+  --color-surface-2: #151b16;
+  --color-surface-3: #1d261f;
+  --color-surface-4: #28342a;
+  --color-glass: rgb(14 18 15 / 0.76);
+  --color-glass-strong: rgb(14 18 15 / 0.9);
+  --color-ink-2: #b9c2b4;
+  --color-ink-3: #869183;
+  --color-ink-4: #586155;
+  --color-accent: #c5f53b;
+  --color-accent-hover: #d3fb5c;
+  --color-accent-press: #a6d822;
+  --color-accent-ink: #d3fb5c;
+  --color-accent-soft: rgb(197 245 59 / 0.13);
+  --color-accent-line: rgb(197 245 59 / 0.34);
+  --color-on-accent: #0c1400;
+  --color-focus: #d3fb5c;
+  --gradient-hero: var(--gradient-phosphor);
+  --gradient-hero-soft: var(--gradient-phosphor-soft);
+  background-color: var(--color-canvas);
+  color: var(--color-ink);
+}
+
+@utility bg-hero { background-image: var(--gradient-hero); }
+@utility bg-hero-soft { background-image: var(--gradient-hero-soft); }
+@utility bg-aurora-ring { background-image: var(--gradient-aurora-ring); }
+@utility bg-scrim-top { background-image: var(--gradient-scrim-top); }
+@utility bg-scrim-bottom { background-image: var(--gradient-scrim-bottom); }
+@utility text-hero {
+  background-image: var(--gradient-hero);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+@utility focus-ring { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+@utility scroll-x { overflow-x: auto; overscroll-behavior-x: contain; touch-action: pan-x pan-y; scrollbar-width: none; }
+@utility glass {
+  background-color: var(--color-glass);
+  -webkit-backdrop-filter: blur(20px) saturate(160%);
+  backdrop-filter: blur(20px) saturate(160%);
+  border: 1px solid var(--color-line);
+  box-shadow: var(--inset-shadow-hairline), var(--shadow-lg);
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .glass { background-color: var(--color-glass-strong); }
+}
+@media (prefers-reduced-transparency: reduce) { .glass { background-color: var(--color-glass-strong); backdrop-filter: none; } }
+
+@utility type-display   { font-family: var(--font-display); font-size: 2.125rem; line-height: 2.5rem;   font-weight: 700; letter-spacing: -0.025em; }
+@utility type-title-1   { font-family: var(--font-display); font-size: 1.75rem;  line-height: 2.125rem; font-weight: 700; letter-spacing: -0.02em; }
+@utility type-title-2   { font-family: var(--font-display); font-size: 1.375rem; line-height: 1.75rem;  font-weight: 600; letter-spacing: -0.015em; }
+@utility type-title-3   { font-family: var(--font-display); font-size: 1.125rem; line-height: 1.5rem;   font-weight: 600; letter-spacing: -0.01em; }
+@utility type-headline  { font-family: var(--font-sans); font-size: 1rem;      line-height: 1.375rem; font-weight: 600; letter-spacing: -0.01em; }
+@utility type-body-lg   { font-family: var(--font-sans); font-size: 1.0625rem; line-height: 1.625rem; font-weight: 400; letter-spacing: -0.008em; }
+@utility type-body      { font-family: var(--font-sans); font-size: 0.9375rem; line-height: 1.375rem; font-weight: 400; letter-spacing: -0.005em; }
+@utility type-footnote  { font-family: var(--font-sans); font-size: 0.8125rem; line-height: 1.125rem; font-weight: 400; letter-spacing: 0; }
+@utility type-caption   { font-family: var(--font-sans); font-size: 0.75rem;   line-height: 1rem;     font-weight: 500; letter-spacing: 0.005em; }
+@utility type-micro     { font-family: var(--font-sans); font-size: 0.6875rem; line-height: 0.875rem; font-weight: 600; letter-spacing: 0.02em; }
+@utility type-overline  { font-family: var(--font-sans); font-size: 0.6875rem; line-height: 0.875rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; }
+@utility type-label     { font-family: var(--font-sans); font-size: 0.9375rem; line-height: 1.25rem;  font-weight: 600; letter-spacing: -0.005em; }
+@utility type-label-sm  { font-family: var(--font-sans); font-size: 0.8125rem; line-height: 1rem;     font-weight: 600; letter-spacing: 0; }

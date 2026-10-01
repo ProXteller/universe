@@ -1,0 +1,2 @@
+-- 01-auth: the `auth` slice owns NO tables (SPEC §5.1). Sessions, OTP codes, signup tokens, users, follows and invites
+-- all live in 00-core.sql; the slice only reads core tables and writes through foundation helpers (followUser).

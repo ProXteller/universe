@@ -1,0 +1,1 @@
+-- 06-messages: tables owned by the `messages` slice (SPEC §5). Stub created by foundation.

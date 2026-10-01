@@ -1,0 +1,11 @@
+node_modules
+dist
+*.db
+*.db-shm
+*.db-wal
+server/uploads/*
+!server/uploads/.gitkeep
+.DS_Store
+.env
+server/data/
+server/seed-media/generated/

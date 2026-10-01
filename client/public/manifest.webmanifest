@@ -1,0 +1,17 @@
+{
+  "name": "UniVerse",
+  "short_name": "UniVerse",
+  "description": "Your campus, in one place: Reels, Buzz, Orbit, messages, roommates and a student marketplace.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#04050a",
+  "theme_color": "#090b14",
+  "categories": ["social", "education", "lifestyle"],
+  "icons": [
+    { "src": "/icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/icons/icon-maskable.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}

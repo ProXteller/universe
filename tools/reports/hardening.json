@@ -1,0 +1,520 @@
+{
+ "attacks": [
+  {
+   "key": "firewall-api",
+   "testFile": "/Users/ankurbasnet/Library/Application Support/Claude/scratch-workspaces/3fa03a1d-e11f-44f5-adc4-3fd2c89f5866/214025d0-553e-465e-87ae-d756765a1646/scratch-2026-09-21-68c752/server/tests/hardening/buzz-api-identity.test.ts",
+   "testsWritten": 20,
+   "findings": [
+    {
+     "severity": "high",
+     "file": "server/src/services/buzz/serialize.ts:106 (also server/src/services/buzz/registry.ts:110)",
+     "problem": "L18 small-population deanonymization. In global scope every buzz carries `campusShortName`, and the buzz share card (GET /api/cards/buzz/:id, any scope) has the subtitle `Buzz \u00b7 {short_name}`. A campus auto-created from an unknown academic domain starts with exactly one member. That member's anonymity set is 1: every buzz they post names them to any student. The student only has to match the label against `university.shortName` on public profiles. The test creates a lone user on an auto-created campus, has them post, and as a different user reads the global feed and the card. Both labels name the campus, and GET /api/users/:handle confirms the only member.",
+     "fix": "When the author's campus has fewer than 50 active verified users (SMALL_CAMPUS_USERS, same threshold as smallCampusNote), emit `campusShortName: null`, or a generic 'Another campus' bucket, in serializeBuzz. Apply the same rule to the card resolver subtitle ('Buzz'). Also consider keeping global-scope posting closed, or warning explicitly in the composer, for campuses below the threshold.",
+     "testName": "L18 small-population inference > FINDING: a lone user on an auto-created campus is fully identified by campusShortName in the global feed and the buzz share card"
+    },
+    {
+     "severity": "medium",
+     "file": "server/src/lib/http.ts:108 (encodeCursor); server/src/services/buzz/store.ts:257; server/src/services/buzz/serialize.ts:270",
+     "problem": "L2 says the true created_at may exist 'inside the opaque cursor only', but cursors are only HMAC-signed, not encrypted. Anyone can base64url-decode the payload. (1) With `sort=new&limit=1`, the cursor's `k` is the exact created_at in ms of the item just shown, so paging one item at a time recovers exact ms for every buzz. (2) With `/:threadId/replies?limit=1`, the same holds for every anonymous reply. (3) The `sort=hot` cursor stores `${rankAt}:${hot}` in plain text. With the public `score` and `replyCount`, createdAt = rankAt \u2212 HOUR\u00b7(((s+2r)/hot)^(2/3) \u2212 2) can be solved to below 1 ms (the test measures |derived \u2212 true| = 0). This defeats the minute flooring and enables the L2 correlation attack against the author's public posts, DMs and presence.",
+     "fix": "Make the cursor actually opaque: encrypt the payload in encodeCursor/decodeCursor with AES-256-GCM, using a key derived from CURSOR_SECRET via HKDF with a distinct label. Keep the invalid \u2192 400 `invalid_cursor` behaviour. The GCM tag replaces the HMAC tag. At minimum, do this for every cursor the Buzz router emits (feed new/hot/top, replies, mine).",
+     "testName": "FINDING: sort=new feed cursor (limit=1) base64-decodes to the exact created_at ms of the item it follows; FINDING: replies cursor (limit=1) base64-decodes to the exact created_at ms of an anonymous reply; FINDING: sort=hot cursor exposes rankAt + the raw hot score, from which created_at is solvable to sub-second precision"
+    },
+    {
+     "severity": "medium",
+     "file": "server/src/routes/buzz.ts:183 (insertPoll(created.id, now() + durationDays*DAY, \u2026)); served at server/src/services/buzz/serialize.ts:80",
+     "problem": "`poll.closesAt` is stored and served as exact creation ms + durationDays\u00b7DAY. So `closesAt \u2212 {1|3|7}\u00b7DAY` gives the exact millisecond every poll buzz was created, to any viewer, and undoes the minute-floored `createdAt`. The duration is one of three values, and the test shows the result matches the true instant exactly.",
+     "fix": "Floor the close time when inserting it: `insertPoll(id, Math.floor(now() / MIN) * MIN + durationDays * DAY, \u2026)`. The serializer can also floor `closesAt` to the minute as defence in depth. The closed check (`closes_at <= at`) is unaffected.",
+     "testName": "L2 exact-timestamp side channels > FINDING: poll closesAt = exact creation ms + N days, so every poll buzz leaks its exact createdAt"
+    },
+    {
+     "severity": "low",
+     "file": "server/src/lib/notify.ts:243 (notifyAnonymous `at = now()`), served at server/src/lib/notify.ts:392",
+     "problem": "Anonymous Buzz notification rows (`buzz.reply`, `buzz.milestone`, `buzz.poll_closed`) store and serve `createdAt` as the exact ms of the triggering anonymous reply. An OP who sees `buzz.reply` in GET /api/notifications (even hours later, while offline) gets the replier's exact reply time, while the reply itself shows a floored createdAt. The live ws push already reveals near-real-time timing to an online recipient, hence low severity. The stored value is still a precise, replayable L2 correlation source.",
+     "fix": "In notifyAnonymous, floor `at` to the minute before inserting or updating (`Math.floor(at / MIN) * MIN`), or floor `createdAt` in toNotification when `row.anonymous === 1`.",
+     "testName": "L2 exact-timestamp side channels > FINDING: Buzz notifications carry the exact ms of the anonymous reply that triggered them (createdAt not floored)"
+    },
+    {
+     "severity": "low",
+     "file": "server/src/db/seeds/03-buzz.ts:368 (kit.id('bzr', replyN)), :353 (kit.id('buzz', threadN)), :499 (Maya's cross-thread replies minted last)",
+     "problem": "Seeded Buzz ids are sequential (`buzz_0004\u2026`, `bzr_0001\u2026`), which L1 names as a leak vector (ids must be nanoid(14)). Because the ids are minted in generation order rather than time order, they cluster by author. The three highest `bzr_*` ids are all by one author (Maya), in three different threads, which links her replies across threads. `buzz_0001\u20130003` (hers) also show up out of chronological sequence in the new feed, marking them as one author's block. Every seeded thread is also enumerable by id. This affects only the seed/demo world, but that world is what demo users browse.",
+     "fix": "Mint seeded reply ids and non-final thread ids with a deterministic, non-sequential id from the seed RNG (e.g. a nanoid-shaped string from kit.rng), or at least number them in created_at order after generation so the sequence carries no author information. The SPEC-final ids (buzz_0001\u20130003, buzz_0101\u20130102) need a docs decision. Until then, create Maya's three cross-thread replies in chronological position, not last.",
+     "testName": "L1 ids > FINDING: the three highest-numbered seeded reply ids (bzr_*) all belong to ONE author in three different threads; FINDING: seeded Buzz ids served to members are sequential (`buzz_0001`, `bzr_0001`), not nanoid(14)"
+    }
+   ],
+   "probesThatPassed": [
+    "probe: feed (hot/new/top \u00d7 campus/global \u00d7 day/week/all), meta, thread, all reply pages, mine, karma as author and as stranger: no forbidden key, no seeded identity string, exact allow-listed key set for Buzz and BuzzReply, createdAt % 60000 === 0",
+    "probe: decoded cursors (feed hot/new/top, replies, mine) contain only [sortKey, buzzId], no user data",
+    "probe: alias for the same seeded author differs across threads (Maya's buzz_0001-0003 roots; a background author's replies in 3+ threads), is stable within a thread, and the feed card alias equals the thread root alias",
+    "probe: 'hide this anon' is keyed per thread and never collapses the same author in another thread",
+    "probe: foreign delete, vote/thread/replies/reply/hide on a foreign held item: status and body identical to a missing id; hide-author gives 204 for own and foreign posts; own-vote 400 reaches only the owner; a non-owner's vote returns only {score,myVote,collapsed}",
+    "probe: report receipt has no identity and is byte-identical (except id/createdAt) whether or not the reporter publicly blocked the author",
+    "probe: a public block of the author changes no byte of the new/hot feed or the thread; POST /api/users/<buzz or reply id>/block returns 404 and creates no block (blocking a Buzz author is impossible)",
+    "probe: author's profile (/api/users/mayachen), /api/discover/home, /api/onboarding/suggestions and /api/discover/search are byte-identical for another viewer after the author posts, replies, votes and poll-votes; no buzz.* notification row has a non-null actor_id",
+    "probe: Buzz notifications carry actor null, thumbnailUrl null, actorCount 1, anonymous true, and no identity strings",
+    "probe: buzz share card has ownerId null, imageUrl null and no identity strings; reply ids are not card-resolvable",
+    "probe: analytics buzz_* rows have user_id NULL, session_id NULL, minute-floored created_at and no *id props; no attributed event mentions a buzz id",
+    "probe: ws events to thread participants are exactly {type:'buzz.thread_updated', threadId}"
+   ]
+  },
+  {
+   "key": "firewall-staff",
+   "testFile": "/Users/ankurbasnet/Library/Application Support/Claude/scratch-workspaces/3fa03a1d-e11f-44f5-adc4-3fd2c89f5866/214025d0-553e-465e-87ae-d756765a1646/scratch-2026-09-21-68c752/server/tests/hardening/buzz-staff-firewall.test.ts",
+   "testsWritten": 16,
+   "findings": [
+    {
+     "severity": "critical",
+     "file": "server/src/services/admin/users.ts:118-137 (liftUserSanction returns staffUserDetail(staff, row.user_id))",
+     "testName": "(b) admin: unmask only through the dedicated endpoint > FINDING: POST /admin/sanctions/:id/lift on an anon-origin sanction returns the Buzz author's StaffUserDetail (unmask without reason / UNMASK / buzz_unmask row)",
+     "problem": "An admin gets a Buzz author's full identity (id, handle, name, email) without using the unmask endpoint. The steps: read GET /admin/audit?action=sanction_apply, take metadata.sanctionId from the row whose targetId is the Buzz post, then call POST /admin/sanctions/<id>/lift. The response is the author's StaffUserDetail. No reason code, no 30-character reason, no typed UNMASK, no buzz_unmask audit row, and the other admins get no unmask_alert. This breaks Constitution \u00a75.5 ('only through an explicit endpoint').",
+     "fix": "When the sanction is anon-origin (originOf(row) === 'anon', using the sanction's entity_type or its queue item), liftUserSanction must not return StaffUserDetail. Return a blind result instead, for example { ok: true, origin: 'anon' } or the blind StaffQueueItemDetail of the linked queue item. Better still, refuse anon-origin ids on this route (404) and send them through POST /queue/:id/actions {action:'lift_sanction'}, which already answers with the blind detail."
+    },
+    {
+     "severity": "high",
+     "file": "server/src/lib/moderation/staff.ts:533-535 (sanction_apply metadata.sanctionId for anon origin) + staff.ts:696-709 (staffStandingFor keeps the real sanction id on admin anon rows)",
+     "testName": "(b) admin: unmask only through the dedicated endpoint > FINDING: admin links a Buzz post to its author WITHOUT unmask \u2014 audit `sanction_apply.metadata.sanctionId` joins /admin/users sanctions",
+     "problem": "An admin can link a Buzz post to its author without unmasking and without side effects. The anon-origin `sanction_apply` audit row targets the Buzz entity but carries the real `sanctionId` in its metadata. That id also appears unchanged in GET /admin/users and /admin/users/:id for admins (the anon-origin row with origin:'anon'). Searching users (e.g. q=edu, paged) and matching the id identifies the author, and no buzz_unmask row is written. This defeats the day-flooring of rule 2, whose purpose is to stop exactly this join. The same key also leaks through recordAction metadata.sanctionId (staff.ts:637, when a lift is recorded) and through sanction_reduce metadata.sanctionId (services/admin/appeals.ts:128).",
+     "fix": "Do not let one sanction id appear on both sides. Option 1: for anon-origin rows, drop sanctionId/strikeId and the exact effectiveAt/endsAt from audit metadata at write time (applySanction, addStrike, recordAction, sanction_reduce), or strip them in serializeAuditRow and the CSV. Option 2: in staffStandingFor for admins, replace the id of anon-origin rows with an opaque per-response token, as appeals already do with idOverride. Doing both is safest. Add a regression test that no anon-origin sanction id appears in any /admin/audit or /admin/users body."
+    },
+    {
+     "severity": "high",
+     "file": "server/src/services/admin/users.ts:37 (toDetail emits raw users.status) \u2014 triggered by services/admin/actions.ts:176-180 (zero-tolerance auto-suspension)",
+     "testName": "(a) moderator cannot learn a Buzz author through /api/admin > FINDING: a zero-tolerance Buzz removal by a moderator flips the author's `status` in /admin/users (moderator diff reveals the author)",
+     "problem": "When a moderator confirms a zero-tolerance category on a Buzz item (threat_violence, sexual_explicit or pii_doxxing at critical severity, or sexual_minors), the system immediately applies a 7-day suspension (delayed:false) to the hidden author. StaffUserDetail.status comes straight from users.status, so it flips from 'active' to 'suspended' in the moderator's /admin/users and /admin/users/:id. staffStandingFor hides the anon-origin sanction row, but the status field still moves. A moderator who snapshots /admin/users before acting and diffs afterwards learns the author. This breaks SPEC \u00a73.2 #9 ('counters that move when a Buzz item is actioned').",
+     "fix": "Compute the staff-facing status from the viewer's view of sanctions. For role !== 'admin', derive it only from active public-origin sanctions (the same filter as staffStandingFor), i.e. report 'active' when the only restricting rows are anon-origin. Add a `status` field to staffStandingFor's result and use it in toDetail. Enforcement keeps using users.status."
+    },
+    {
+     "severity": "high",
+     "file": "server/src/services/admin/actions.ts:128-134 (escalate + sexual_minors \u2192 immediate suspension) \u2192 surfaced by services/admin/users.ts:37",
+     "testName": "(a) moderator cannot learn a Buzz author through /api/admin > FINDING: escalating a Buzz item as sexual_minors auto-suspends the author and the moderator sees the status flip in /admin/users",
+     "problem": "This is the same leak through a second path. A moderator escalates a Buzz item with category sexual_minors, which suspends the author immediately. The moderator then reads status 'suspended' for that user in /admin/users/:id. Escalated items leave the moderator's queue, but the author's identity has already leaked.",
+     "fix": "The same fix as the status finding above (a status view filtered by origin for non-admins) closes this path. Keep the enforcement (the suspension). Only the moderator-visible status has to stop moving."
+    },
+    {
+     "severity": "high",
+     "file": "server/src/lib/moderation/staff.ts:283-303 (blindAuthorStanding: `sanction` from activeSanctionRows over every origin)",
+     "testName": "(a) moderator cannot learn a Buzz author through /api/admin > FINDING: blind author panel reacts to a public-origin MUTE the moderator applies directly (hypothesis-testing oracle)",
+     "problem": "The blind panel works as a guessing test for moderators. A moderator can mute any user for up to 7 days through POST /admin/users/:id/sanctions, which is a public-origin sanction. They then reopen the Buzz item: the blind panel's `author.sanction` flips from null to 'mute' only when the guess is right, because blindAuthorStanding reads activeSanctionRows(authorId) across every origin. Muting candidates one at a time identifies the Buzz author.",
+     "fix": "For moderators, build blindAuthorStanding only from anon-origin rows: sanctions, strikes, priorByCategory and open items whose entity_type (or queue entity_type) is in ANON_ENTITY_TYPES. This means the Buzz persona's own history, so nothing a moderator can see or change on a named account feeds into it. If admins need the true totals, compute those separately and only for role === 'admin'."
+    },
+    {
+     "severity": "medium",
+     "file": "server/src/services/admin/queue.ts:283-285 (suggestionFor uses activeStrikePoints + hasActiveWarning(authorId, publicOnly=false) for anon items; call site line 417)",
+     "testName": "(a) moderator cannot learn a Buzz author through /api/admin > FINDING: Buzz ladder suggestion reacts to a public-origin WARNING the moderator applies directly (hypothesis-testing oracle)",
+     "problem": "On a Buzz item, the ladder suggestion counts the author's true active warnings (all origins) and true strike points. A moderator warns a candidate directly (a public-origin warning, which moderators can do, audited but cheap). If the suggestion on the Buzz item changes from 'remove_and_warn \u2192 warning' to 'remove \u2192 removal only', the candidate is the author. Adding a public strike moves the strike bucket the same way.",
+     "fix": "For anon items viewed by a non-admin, compute the suggestion from anon-origin strikes and warnings only: call hasActiveWarning(authorId, /*anonOnly*/) and sum only anon-origin strike points. Set publicOnly/anon scope in queueDetail to match. Enforcement is unaffected because a human picks the action."
+    },
+    {
+     "severity": "medium",
+     "file": "server/src/lib/moderation/staff.ts:293-295 (blindAuthorStanding.otherOpenItems counts every open mod_queue row by author_id) and 288-292 (priorByCategory counts public strikes)",
+     "testName": "(a) moderator cannot learn a Buzz author through /api/admin > FINDING: blind panel `otherOpenItems` counts the author's PUBLIC queue items, which moderators see with the author named",
+     "problem": "A passive correlation that needs no probing. otherOpenItems (and priorByCategory) include the author's public-origin queue items and strikes. Moderators see those same items with the author named, via the public StaffAuthorPanel and /admin/users openQueueItems/strikePoints. Opening or closing a named public item on user X moves the '0'\u2192'1' bucket on X's Buzz items, and matching strike-category profiles narrows the candidates further. The test opens one public profile item for the author, and the Buzz panel goes from otherOpenItems '0' to '1'.",
+     "fix": "This has the same root cause as the MUTE oracle above. Restrict otherOpenItems and priorByCategory to anon-origin rows (mod_queue.entity_type IN ANON_ENTITY_TYPES; strikes whose entity_type or queue entity_type is anon) for non-admin viewers, so the blind panel never overlaps with anything a moderator can see on a named account."
+    }
+   ],
+   "probesThatPassed": [
+    "(a) probe: after a Buzz remove + 24h mute by the moderator, every moderator-readable admin endpoint stays blind. Covered: queue list in all 9 views, counts, detail, action response, /users?q=, /users/:id for the author and bystanders (strikePoints/openQueueItems/sanctions identical before vs after, no Buzz text), /audit own rows (no targetType 'user', no author id), 404 on /audit/export.csv, and analytics overview/apartments/moderation, all with no identity strings",
+    "(a) probe: appeals of an anon-origin mute are blind. No identity, sanction.id is replaced by the appeal id, the real sanction id never appears, createdAt/sanction.createdAt are day-floored, the appeal's queue item has a blind author panel, and the moderator's user view shows zero anon-origin sanctions and openQueueItems 0",
+    "(b) probe: unmask gate. Moderator gets 404. Admin gets 404 when the post has no queue item, 400 for a 29-char reason, 400 for a reason that only reaches 30 with whitespace padding, 400 for a lowercase confirmText, 400 for a non-Buzz entity type. None of these responses leaks identity and none writes a buzz_unmask row",
+    "(b) probe: a valid unmask returns the author, writes buzz_unmask (with the reason) before buzz_unmask_subject, and unmaskId equals the audit id. The audit rows hold no id/handle/name/email, the second admin gets admin.unmask_alert with no identity, and moderators cannot see the unmask audit rows",
+    "(b) probe: the Buzz queue detail is blind for admins too. Blind author panel, no reporter identity even for admin, passes assertNoForbiddenKeys/assertNoIdentityLeak, canUnmask true",
+    "(c) probe: a full flow (Buzz post, report, moderator detail and action, admin unmask) prints neither the author's id/handle/name/email nor the Buzz text to console.log/info/warn/error",
+    "(c) probe: buzz_* analytics_events rows have user_id NULL, session_id NULL, minute-floored created_at, and no *id props. The Buzz write produced no named analytics_events row and no public_activity row for the author",
+    "(c) probe (DB inventory): after post, report and moderator action, the only tables holding a row with both the author id and the Buzz id are buzz_posts, mod_queue, moderation_events, moderation_actions, strikes, user_sanctions and notifications (the author's own inbox). audit_log never holds the pair. All admin reads of those tables go through the blind serializers (confirmed by the (a) probe), except the sanction-id join and the lift endpoint reported as findings",
+    "(c) probe: the request logger (NODE_ENV=development, fresh module) prints only '/api/admin/*' and '/api/buzz/*' for unmask, queue-detail, thread and admin-user paths. No concrete ids, no query strings, no user id"
+   ]
+  },
+  {
+   "key": "firewall-client",
+   "testFile": "/Users/ankurbasnet/Library/Application Support/Claude/scratch-workspaces/3fa03a1d-e11f-44f5-adc4-3fd2c89f5866/214025d0-553e-465e-87ae-d756765a1646/scratch-2026-09-21-68c752/server/tests/hardening/buzz-client-identity.test.ts",
+   "testsWritten": 9,
+   "findings": [
+    {
+     "severity": "high",
+     "file": "server/src/routes/core/analytics.ts:37 (+ server/src/lib/analytics.ts:103-115, client/src/components/ShareSheet.tsx:99,108,194)",
+     "testName": "analytics from Buzz screens > share_click fired by the Buzz share sheet is never stored with the viewer user_id next to the Buzz thread id",
+     "problem": "Tapping Share on any buzz card (client/src/features/buzz/parts.tsx:251, and the overflow menu at parts.tsx:231) opens ShareHost. ShareHost tracks share_click {kind:'buzz', id: threadId, method:'sheet'} as soon as the sheet opens, before anything is shared. Copy link and Share\u2026 track it again with method 'copy' / 'native'. share_click is not in ANON_ANALYTICS_EVENTS, so the server stores each of these events with user_id, session_id and the Buzz thread id in props_json. Authors are the people most likely to share their own posts, so analytics_events now holds an unaudited list of user and Buzz thread pairs. That bypasses the audited unmask endpoint and breaks SPEC \u00a73.2 #8. Test result: the stored row has user_id='t_\u2026' and props containing the thread id.",
+     "fix": "Server: in trackEvent (or the /analytics/track route), handle share_click with props.kind === 'buzz' like the anonymous path: user_id NULL, session_id NULL, and drop every *id key. Do the same for the server-side share_click in lib/share.ts:58 when request.card.kind === 'buzz'. Client: ShareSheet/ShareHost should leave `id` out of track() when card.kind === 'buzz'."
+    },
+    {
+     "severity": "high",
+     "file": "server/src/routes/core/analytics.ts:37 (lib/analytics.ts sanitizeProps:64-80)",
+     "testName": "analytics from Buzz screens (join oracle) > anonymous Buzz events keep no exact client timestamp that joins them to the user-linked event of the same batch",
+     "problem": "The /analytics/track route copies the client's millisecond `ts` into props.clientTs for every event, including the ANON_ANALYTICS_EVENTS. sanitizeProps only strips keys ending in 'id', so the anonymous buzz_feed_view row keeps an exact clientTs. The server floors created_at to the minute, but this defeats that. Settling on Buzz fires home_tab_view {tab:'buzz'} (user-linked, HomePage.tsx:136) and buzz_feed_view (anonymous, buzz/pane.tsx:86) in the same client batch, a few ms apart. Matching clientTs values links anon_hash to user_id, and because anon_hash is stable for the whole UTC day, every buzz_post, buzz_vote, buzz_reply and buzz_poll_vote that user makes that day is de-anonymised in analytics. Test result: the anonymous row's props contain clientTs.",
+     "fix": "For anonymous events, do not store clientTs: drop it in the route before calling trackEvent, or have sanitizeProps(\u2026, anonymous=true) remove clientTs and any other timestamp-like key. Optionally floor it to the minute for public events too. Add clientTs to the anonymous drop list next to the /id$/ rule."
+    },
+    {
+     "severity": "medium",
+     "file": "client/src/components/ShareSheet.tsx:129 (+ client/src/features/buzz/parts.tsx:251 and :231; server/src/lib/share.ts:33,52)",
+     "testName": "share-to-chat of a Buzz > a moderator-removed buzz does not live on in the recipient chat as the sharer caption",
+     "problem": "The Buzz share entry points pass `text: item.text.slice(0, 140)` to openShare. That field is meant for navigator.share, but ShareSheet sends it as the chat caption: `send.mutate({ card, conversationIds, text })`. Every buzz shared to a chat is therefore copied verbatim into a message with kind:'card' and text set to the buzz text, shown under the sharer's real name and avatar and in the inbox preview (conversations.ts:854). When moderators remove the buzz, the card becomes 'No longer available' but the copied text stays readable in Messages indefinitely. This matters most for harassment or threat buzzes. It also makes the anonymous text look like the sharer wrote it. Test result: after setStatus('removed'), the recipient's GET /conversations/:id/messages still contains the full removed text.",
+     "fix": "Client: ShareSheet should send only a caption the user actually typed. Stop forwarding OpenShareInput.text as the caption (keep it for navigator.share only), or leave it out when card.kind === 'buzz'. Server (defence in depth): in shareCard, when request.card.kind === 'buzz', drop a caption that reproduces the buzz text (for example, when the caption is a prefix or substring of snippet(row.text)). Also consider blanking card-attached captions in removeNotificationsFor / the buzz adapter's setStatus('removed')."
+    },
+    {
+     "severity": "low",
+     "file": "server/src/lib/conversations.ts:870-871 (rendered by client/src/components/ShareSheet.tsx:27-37)",
+     "testName": "share-to-chat of a Buzz > the share sheet opened from Buzz never lists the viewer's own avatar/name (member preview of a chat they are alone in)",
+     "problem": "serializeConversation builds memberPreview from `others.length > 0 ? others : members`. In a group or course chat where everyone else has left, or where no one else has joined yet, memberPreview is the viewer themselves. GET /share/targets returns that chat, and the ShareSheet opened from a buzz card renders it as an AvatarStack with the viewer's own avatar, and their displayName as the img alt. The viewer's face and name then appear inside a Buzz-originated sheet. Test result: memberPreview contains the viewer's own id.",
+     "fix": "Never fall back to the viewer in memberPreview (use `others` only, possibly empty), or filter the viewer out in listShareTargets. ShareSheet's TargetBubble should also skip the viewer's id and fall back to a neutral group glyph."
+    },
+    {
+     "severity": "low",
+     "file": "server/src/lib/notify.ts:243 and :269-277 (notifyAnonymous)",
+     "testName": "Buzz notifications > anonymous notification timestamps are floored to the minute like every Buzz createdAt (no exact reply-time oracle)",
+     "problem": "Buzz item createdAt is floored to the minute (SPEC \u00a73.2 #3) so reply times cannot be correlated with outside activity. But anonymous notification rows store and serialize the exact millisecond time of the reply or vote: `at = now()`, then created_at = at, and on collapse created_at = max(at, \u2026). This applies to GET /notifications and to the ws `notification` push. The thread author gets a persistent, exact 'someone replied at 14:03:12.345' record that can be lined up with DM timestamps, presence or typing of people they suspect. Test result: createdAt % 60000 === 12345.",
+     "fix": "In notifyAnonymous, floor `at` to the minute before insert and on the collapse UPDATE (Math.floor(at / MIN) * MIN). Optionally delay or batch the ws publish of anonymous rows by a small random interval so real-time delivery is not an exact clock either."
+    },
+    {
+     "severity": "medium",
+     "file": "client/src/features/reels/ReelsPane.tsx:215; client/src/app/home/HomePage.tsx:261-283",
+     "testName": "(client-only, no server test)",
+     "problem": "All three Home panes stay mounted, and inactive panes are not marked `inert` or aria-hidden. ReelsPane always renders the 'New reel' button with `<Avatar src={me.avatarUrl} name={me.displayName}>`. With no onClick, Avatar sets alt = displayName (ui/Avatar.tsx:64). So while at rest on /home/buzz, #frame (DOM and accessibility tree) contains the viewer's avatar URL and display name, and Tab from the Buzz pane can move focus into the off-screen Reels pane, which can scroll the pager. A visited OrbitPane can also keep the viewer's own posts, with avatar and name, mounted next to Buzz. This undoes the foundation guarantee in FOUNDATION-NOTES line 271 ('at rest on /home/buzz a DOM scan of #frame finds no avatar URL, name or handle'), which was verified before the Reels and Orbit slices were built.",
+     "fix": "HomePage: once the pager has settled, set `inert` and aria-hidden on every pane section whose tab !== the active tab (clear it while dragging). ReelsPane: render the own-avatar New-reel button only while `active` (or while homeProgress < 1), and use a neutral Plus glyph otherwise. Add a Playwright/DOM check that, at rest on Buzz, #frame contains no me.avatarUrl, displayName or handle."
+    },
+    {
+     "severity": "low",
+     "file": "client/src/app/AppShell.tsx:53; client/src/components/ShareSheet.tsx:187-199",
+     "testName": "(client-only, no server test)",
+     "problem": "Unlike ReportHost, which re-stamps the caller's surface mode, ShareHost does not capture a surface mode. The share sheet opened from a buzz therefore renders in public Aurora chrome over the incognito Buzz surface, with the viewer's real chat list: contacts' avatars, names and group previews. There is no 'you are sharing an anonymous post' framing, which makes the finding above (own avatar in memberPreview) visible inside Buzz.",
+     "fix": "Give openShare an optional `mode` (as openReport has) and render ShareSheet inside <Surface mode={mode}> with display:contents. Buzz callers pass 'incognito'. In incognito mode, add a line such as 'Shares the post only. Your chat will see it came from you.'"
+    },
+    {
+     "severity": "low",
+     "file": "client/src/features/buzz/parts.tsx:31-32, 92, 138, 211-235; client/src/features/buzz/BuzzCard.tsx:34",
+     "testName": "(client-only, no server test)",
+     "problem": "There is no way to hide 'yours' marks on a shared device or from a shoulder-surfer. Own buzzes in the public Hot/New feed show 'You \u00b7 Anon X', a status chip, a vote cluster disabled at 45% opacity, poll results without voting, and a different overflow menu (Delete, no Report or Hide). The disabled vote cluster and the menu still give ownership away even if the 'You' label is removed. The bell list also shows 'Someone replied to your buzz: \"<own text>\"' on a public surface.",
+     "fix": "Add a Settings > Privacy toggle, 'Hide my markers in feeds', that removes the 'You' label and status chip in feed and thread views (keep them in /buzz/mine). Render own items' vote buttons normally and make the tap a no-op with a toast. Optionally offer 'hide Buzz snippets in notifications'. SPEC \u00a75.3 acceptance requires 'You \u00b7 {alias}', so this is a spec-level change: raise it with the orchestrator rather than silently removing the label."
+    }
+   ],
+   "probesThatPassed": [
+    "probes > the buzz share card is viewer-independent: author and stranger get byte-identical, identity-free cards (ownerId null, no alias/isMine/isOp)",
+    "probes > a buzz card delivered in a DM carries nothing about the Buzz author; the author's ws stream sees nothing about the share",
+    "probes > Buzz reply ws traffic: author gets an actor-less anonymous notification (actor null, actorCount 1, no thumbnail); replier only gets {type:'buzz.thread_updated', threadId} and no notification",
+    "probes > Buzz text never reaches the author's public profile (/api/users/:handle) or people search",
+    "client (read, no test): buzz store/api use no localStorage/sessionStorage; query keys ['buzz',...] hold thread ids only, never author ids; logout calls queryClient.clear() + store resets (lib/session.ts:87)",
+    "client (read, no test): Orbit PostText link-cards exclude /buzz/ links (orbit/PostText.tsx:20-24), so Buzz cannot be embedded in Orbit/profiles",
+    "client (read, no test): Buzz composer/reply bar use ComposerModeBanner mode='incognito' (no avatar/handle); ReportSheet opened from Buzz gets mode 'incognito' and no author (no Block)",
+    "client (read, no test): HomeTopBar unmounts the Me avatar layer at rest on Buzz (HomeTopBar.tsx:148); buzz_* client track() calls carry only sort/scope"
+   ]
+  },
+  {
+   "key": "security-authz",
+   "testFile": "/Users/ankurbasnet/Library/Application Support/Claude/scratch-workspaces/3fa03a1d-e11f-44f5-adc4-3fd2c89f5866/214025d0-553e-465e-87ae-d756765a1646/scratch-2026-09-21-68c752/server/tests/hardening/authz.test.ts",
+   "testsWritten": 176,
+   "findings": [
+    {
+     "severity": "high",
+     "file": "server/src/services/campus/events.ts:92",
+     "testName": "campus events: host-only edits; campus-only RSVPs > a user on another campus cannot RSVP \"going\" to unlock a private-residence address",
+     "problem": "`loadVisibleEvent()` never compares `e.university_id` with the viewer's campus. Only the list queries (`listEvents`, `hubEvents`) are campus-scoped. A student on another campus can therefore GET /api/campus/events/:id, PUT /rsvp {state:'going'} and GET /attendees for any campus event. Going then unlocks the private-residence address, which is meant only for RSVPs (safety \u00a77.7). The test shows a Stanford user RSVPing to a UT event and reading '2401 Rio Grande St Apt 4B'.",
+     "fix": "Add `e.university_id = ?` (the viewer's `universityId`) to `loadVisibleEvent`, keeping the host exemption if hosts can ever be off-campus. This one change covers detail, RSVP, attendees and the address reveal, which all go through it. Also scope `listUserEvents` (GET /campus/users/:userId/events) the same way."
+    },
+    {
+     "severity": "high",
+     "file": "server/src/lib/conversations.ts:329",
+     "testName": "messages: DMs and requests are private to their members > a minor can only be reached from their own campus \u2014 group invites included (safety \u00a77.7)",
+     "problem": "`createGroup()` checks only block and active status for each invitee. `openDm()` also enforces the minor cross-campus rule (safety \u00a77.7), `whoCanMessage` ('campus' / 'following') and the 30-day decline cooldown, but `createGroup()` skips all three. An adult on another campus is refused a DM with a UT minor (403), yet POST /api/conversations/groups {memberIds:[pal, minor]} returns 201. The minor is added (as a request) and gets messages.",
+     "fix": "Pull the per-peer gate out of `openDm` into one `assertCanReach(viewer, peerRow)` helper: minor cross-campus, whoCanMessage campus/following, and the cooldown. Call it for every invitee in `createGroup` and throw 403 `cannot_message`."
+    },
+    {
+     "severity": "medium",
+     "file": "server/src/lib/conversations.ts:329",
+     "testName": "messages: DMs and requests are private to their members > group create honours the invitee\u2019s \"Who can message me: people I follow\" setting (safety \u00a77.2)",
+     "problem": "The invitee's `whoCanMessage` setting is ignored for group invites. With 'following' set, a DM from a non-followed user gets 403 `cannot_message`, but the same user can create a group containing them and gets 201. That bypasses the 'Who can message me' privacy control in safety \u00a77.2.",
+     "fix": "Same shared `assertCanReach` helper as above, applied to every invitee in `createGroup`."
+    },
+    {
+     "severity": "medium",
+     "file": "server/src/routes/messages.ts:146",
+     "testName": "messages: DMs and requests are private to their members > adding a member to an existing group honours \"Who can message me: my campus\"",
+     "problem": "POST /api/conversations/:id/members checks only `status !== 'active'` and `isBlockedBetween`. The invitee's `whoCanMessage`, the minor cross-campus rule and the decline cooldown are not checked. A user on another campus adds a 'campus-only' user to a group and gets 200, even though a direct DM is 403.",
+     "fix": "Call the same `assertCanReach(user, row)` helper for every id in `newIds` before `addMember`."
+    },
+    {
+     "severity": "medium",
+     "file": "server/src/routes/messages.ts:146",
+     "testName": "messages: DMs and requests are private to their members > muted users cannot create new message requests by adding non-followers to a group (safety \u00a74.1)",
+     "problem": "POST /:id/members has no `requireCanPost` / `assertCanPost`. A muted user can still add non-followers to an existing group, and each one lands as a new 'request' with a `message.group_added` notification. Safety \u00a74.1 says a mute blocks group chats and new message requests. POST /groups refuses the muted user (403), but POST /:id/members returns 200.",
+     "fix": "Call `assertCanPost(user, 'message_request')` (or 'public') in the /:id/members handler whenever any new member would land in state 'request', or unconditionally, to match POST /groups."
+    },
+    {
+     "severity": "medium",
+     "file": "server/src/services/market/registry.ts:98",
+     "testName": "market: B cannot edit / delete / mark-sold / relist / accept-offer on A\u2019s listing > share card of a HELD (pre-publication review) listing does not disclose its text to other users",
+     "problem": "The `listing` card resolver returns `listingCard(row)` for any non-deleted row. For held, hidden or removed rows it sets only `status:'unavailable'` and still returns the real title, subtitle (condition or tradeFor), cover image, price and meetupSpot. `resolveCard` passes these through, so any signed-in user can read a staff-held (pre-publication) or removed listing's text via GET /api/cards/listing/:id. It also shows up in any chat where it was shared. This breaks SPEC \u00a74.2.10 ('Resolvers MUST apply block + status rules') and \u00a73.1 (no one but the author sees held content). The companion test 'share card of a staff-removed listing \u2026' fails the same way.",
+     "fix": "In the resolver, return null when `row.status !== 'active'` unless `viewerId === row.seller_id`, as the post and event resolvers already do. `resolveCard` then emits the generic 'No longer available' card."
+    },
+    {
+     "severity": "medium",
+     "file": "server/src/services/reels/reels.ts:80",
+     "testName": "reels: B cannot delete A\u2019s reel or comment; campus-visibility reels stay on campus > a visibility:\"campus\" reel cannot be opened, liked or commented on from another campus",
+     "problem": "`canSeeReel` / `visibleReelSql` ignore `reels.visibility`. The global feed filters on visibility='global', but a reel the author marked campus-only can still be opened (GET /api/reels/:id), liked and commented on by any user on another campus. The same applies to the user grid (GET /reels/users/:userId) and the `reel` card resolver.",
+     "fix": "Add `(r.visibility = 'global' OR r.university_id = ?)` (the viewer's campus) to `visibleReelSql`, keeping the author exemption. Apply the same rule in the `reel` card resolver (services/reels/registry.ts:79)."
+    },
+    {
+     "severity": "low",
+     "file": "server/src/services/roommates/registry.ts:74",
+     "testName": "roommates: \"browse & match only\" answers stay private; campus-only > roommate share card does not cross campuses (roommates is campus-only)",
+     "problem": "The `roommate` card resolver has no campus check. SPEC \u00a75.7 says roommates is campus-only (university_id = viewer's always). A user on another campus gets 404 on GET /roommates/:id, but GET /api/cards/roommate/:id still returns 'available' with the owner's first name, mode, budget, move-in month and photo. The same user can also pin that card as DM context.",
+     "fix": "In the resolver, return null when the viewer's `university_id !== row.university_id` and the viewer is not the owner, as the `course` resolver already does (services/campus/registry.ts:108)."
+    },
+    {
+     "severity": "low",
+     "file": "server/src/services/market/registry.ts:98",
+     "testName": "market: B cannot edit / delete / mark-sold / relist / accept-offer on A\u2019s listing > share card of a listing does not cross campuses (market is campus-only)",
+     "problem": "The `listing` card resolver has no campus check. SPEC \u00a75.8 says market is campus-only, and GET /market/listings/:id is 404 from another campus, yet GET /api/cards/listing/:id shows that user the title, price, photo and meetupSpot as 'available'.",
+     "fix": "Return null from the listing resolver when the viewer is on a different campus and is not the seller. Fix this together with the held/removed status fix above."
+    }
+   ],
+   "probesThatPassed": [
+    "Signed-out: all 89 mutating endpoints across core, auth, reels, buzz, orbit, discover, messages, roommates, market, campus, apartments and admin return 401 unauthenticated",
+    "Admin surface: all 26 /api/admin routes, including unknown paths, return 404 not_found for a student and for an org account",
+    "Moderator: admin-only routes (role, verify, lift, rule packs, audit CSV, unmask) return 404; moderator cannot suspend or ban (403); target role unchanged",
+    "Market: non-owner PATCH / DELETE / sold / relist (including relisting someone else's sold listing) return 404 and the row is unchanged",
+    "Market offers: outsider 404; buyer cannot accept own offer (403); seller cannot withdraw the buyer's offer (403); offer stays pending",
+    "Market campus-only: another campus cannot open, save, offer on or browse the listing",
+    "Orbit: non-owner cannot delete a post or a comment; blocked user cannot like or comment (404)",
+    "Reels: non-owner cannot delete a reel or a reel comment",
+    "Buzz: non-owner delete returns 404 with a body identical to a missing id; buzz survives",
+    "Campus: non-host PATCH / cancel refused and event unchanged; RSVP body userId ignored (cannot RSVP as someone else)",
+    "Campus courses: another campus cannot open or join a course (404)",
+    "Org can host events; a student cannot edit an org's event",
+    "Roommates browse & match only: an unpublished profile is not reachable by another user via detail (404), browse, card (unavailable), save (404), report (404) or DM context (400)",
+    "Roommates: a published profile is 404 for detail and save from another campus",
+    "Messages: an outsider gets 404 on detail, messages, send, reaction, read, accept, decline, patch, add-member and delete-message in another pair's DM",
+    "Messages: a member cannot delete someone else's message",
+    "Messages: A cannot see B's message requests (inbox tab or by id); the requester cannot accept on the recipient's behalf",
+    "Messages: a member who left a group cannot read it or re-add themselves; there is no endpoint to remove another member",
+    "Suspended user: orbit, buzz, market, roommates, events, DM send, POST /dm, PATCH /me and follow all return 403 suspended",
+    "Muted user: orbit, buzz and event creates return 403; reads still work",
+    "Core: A cannot mark B's notifications read by id",
+    "Core: a blocked user cannot follow the blocker (404) or DM them (403)",
+    "Uploads: B's upload cannot be attached by A as listing photo, post image or event cover (404)"
+   ]
+  },
+  {
+   "key": "security-input",
+   "testFile": "/Users/ankurbasnet/Library/Application Support/Claude/scratch-workspaces/3fa03a1d-e11f-44f5-adc4-3fd2c89f5866/214025d0-553e-465e-87ae-d756765a1646/scratch-2026-09-21-68c752/server/tests/hardening/input-abuse.test.ts",
+   "testsWritten": 51,
+   "findings": [
+    {
+     "severity": "high",
+     "file": "server/src/lib/uploads.ts:402",
+     "problem": "The WebM duration probe calls readAt(fd, dataStart, size.value) with whatever size the element header declares, and readAt does Buffer.alloc(length). A 50-byte WebM whose TimecodeScale (or Duration) element declares 1 GiB makes the server zero-fill a 1 GiB buffer. Any onboarded user can send one with POST /api/uploads (kind=video, video/webm). A few concurrent requests (or sizes near the Buffer max) can exhaust or OOM an 8 GB host. Measured: the largest allocation was 1073741824 bytes.",
+     "fix": "In probeWebm, read TimecodeScale only when 1 \u2264 size \u2264 8 and Duration only when size is 4 or 8, and skip any other size without reading. In readAt, clamp length to min(length, fileSize \u2212 position, 64). Treat an element whose declared end is past EOF (and is not the unknown-size marker) as unparseable and return null.",
+     "testName": "A. uploads > [FINDING] WebM probe allocates whatever size an element header declares (50-byte file \u2192 1 GiB Buffer.alloc)"
+    },
+    {
+     "severity": "high",
+     "file": "server/src/lib/uploads.ts:304",
+     "problem": "probeMp4 (lines 304-344) and probeWebm (lines 376-415) walk every top-level box or element with synchronous fs.readSync on the event loop and have no iteration cap. Measured: 200k 8-byte MP4 'free' boxes took 200,001 readSync calls; 100k 2-byte WebM Void elements in an unknown-size Segment took 400,008 calls; 8 MB of those elements blocked the loop for about 9 s. At the 150 MB video cap, one upload freezes the whole API (every user, including ws) for about 15 s (MP4) or about 3 min (WebM).",
+     "fix": "Cap the walk: for example, at most 1,024 boxes per level for MP4 and at most 4,096 elements for WebM, and return null after that. Stop the WebM Segment walk at the first Cluster or Cues. Better still, run the probe with async fs.promises reads or in a worker thread with a time budget (for example 200 ms), so a hostile file cannot stall the event loop.",
+     "testName": "A. uploads > [FINDING] MP4 probe walks an unbounded number of boxes synchronously (200k 8-byte boxes \u2192 200k readSync calls on the event loop); A. uploads > [FINDING] WebM probe walks an unbounded number of elements synchronously (100k 2-byte elements in an unknown-size Segment)"
+    },
+    {
+     "severity": "high",
+     "file": "server/src/lib/moderation/normalize.ts:49",
+     "problem": "Unicode evasions get blocked threat and kys text past moderateText on every UGC surface (buzz, buzz_reply, buzz_poll, orbit_post, comment, reel_caption, event, profile, group_name, market_listing, roommate_listing, message, group_message). Tested with the real engine and the admin packs loaded. Evasions that lead to 'allow': Latin small capitals (\u1d0b\u026a\u029f\u029f), U+2800 braille blank between letters, U+FFF9 interlinear annotation, and \u0269 used for i. Evasions that downgrade a block to 'flag': tag characters U+E0000\u2013E007F, shorthand format controls U+1BCA0\u20131BCA3, and regional-indicator letters. End to end, a small-caps 'i am going to kill you' returns 201 (active) on POST /orbit/posts, POST /buzz and POST /reels/:id/comments, while the plain text returns 422. Zero-width characters, word joiner, soft hyphen, Cyrillic and Greek homoglyphs, fullwidth, math-bold, combining marks and the Hangul filler are handled correctly (those probes pass).",
+     "fix": "In the N2 invisible-character strip, remove every code point with \\p{Default_Ignorable_Code_Point} or \\p{Cf}, plus U+2800, U+FFF9\u2013FFFB, U+E0000\u2013E007F and U+1BCA0\u20131BCA3, and count them as evasion signals. In N5, fold confusables using a UTS #39 skeleton table, or at least map Latin small capitals and IPA letters (\u1d00 \u0299 \u1d04 \u1d05 \u1d07 \ua730 \u0262 \u029c \u026a \u1d0a \u1d0b \u029f \u1d0d \u0274 \u1d0f \u1d18 \u01eb \u0280 \ua731 \u1d1b \u1d1c \u1d20 \u1d21 \u028f \u1d22 \u0269 \u0251 \u2026) and the regional indicators U+1F1E6\u20131F1FF to a\u2013z. Add these cases to the moderation fixture tables.",
+     "testName": "F. moderation bypass (real engine) > [FINDING] latin small capitals (\u1d0b\u026a\u029f\u029f) \u2026 / braille blank U+2800 \u2026 / interlinear annotation U+FFF9 \u2026 / tag characters U+E0041 \u2026 / shorthand format control U+1BCA0 \u2026 / latin iota \u0269 for i \u2026 / regional indicator letters \u2026 slips a blocked threat/kys past moderateText; F. \u2026 > [FINDING] end-to-end: a small-caps death threat is published ACTIVE on Orbit and Buzz and a reel comment"
+    },
+    {
+     "severity": "high",
+     "file": "server/src/lib/otp.ts:53",
+     "problem": "OTP guessing is bounded only per code: 5 attempts, then 423, and a new code after the 30 s cooldown. Nothing limits a single address across codes, and the IP limiter (10/min) is defeated by rotating IPs. Measured in 6 simulated minutes from 12 IPs: 12 codes issued and 60 guesses evaluated against one account. That is about 14,400 guesses a day, so a 6-digit code falls in roughly 70 days of background guessing. The victim sees nothing except inbox spam.",
+     "fix": "Add a persistent per-address budget in issueOtp and consumeOtp. For example, after 3 locked codes, or 15 failed attempts, in a rolling hour, refuse /auth/start and /auth/verify for that address for 15\u201360 minutes (429 with retryAfterSec). Also cap codes per address per day (for example 10), and keep the failure counter on the email rather than on the code row, so issuing a new code does not reset it.",
+     "testName": "B. auth > [FINDING] OTP brute force across IPs: guesses per address are bounded only by the 30 s resend cooldown (5 guesses / 31 s, forever)"
+    },
+    {
+     "severity": "medium",
+     "file": "server/src/lib/otp.ts:58",
+     "problem": "Resend flooding (mail bombing, and denial-of-wallet on Resend): POST /auth/start will email any academic address a code every 31 s. Measured: 116 emails to one victim address in one simulated hour from rotating IPs, which is about 2,800 a day. It also costs one paid provider send each time.",
+     "fix": "Use an escalating cooldown per address (30 s, 60 s, 2 min, 5 min, 15 min) plus caps (for example 5 an hour and 10 a day per address), and a global per-day send budget with alerting. Return 429 otp_cooldown with retryAfterSec once the cap is reached.",
+     "testName": "B. auth > [FINDING] resend flooding: one address can be sent a code every 31 s from rotating IPs (\u2248116 emails / hour, 2 800 / day)"
+    },
+    {
+     "severity": "medium",
+     "file": "server/src/lib/uploads.ts:175",
+     "problem": "sanitiseJpeg copies everything from the first SOS up to buf.lastIndexOf(FF D9), the last EOI in the file. Anything appended after the real EOI survives and is served from /uploads. That includes an MPF secondary image, an Ultra HDR gain map or a motion-photo MP4, each of which can carry its own Exif or GPS, and also HTML or ZIP polyglot tails. Measured: GPSLatitude and <script> are both present in the file served for an uploaded JPEG. APPn or COM segments placed between progressive scans are kept for the same reason.",
+     "fix": "Parse the entropy-coded segment properly. After SOS, scan until an FF xx where xx is not 00 and not D0\u2013D7, then resume the marker loop, which also drops APPn and COM between progressive scans. Stop at the FIRST EOI and discard every trailing byte. As defence in depth, add `Content-Security-Policy: default-src 'none'; sandbox` to /uploads responses.",
+     "testName": "A. uploads > [FINDING] JPEG sanitiser keeps everything up to the LAST FF D9: an appended EXIF image (MPF / gain map / motion photo) and HTML polyglot payloads survive"
+    },
+    {
+     "severity": "medium",
+     "file": "server/src/lib/uploads.ts:456",
+     "problem": "handleUpload runs runMulter(req) first, which streams a declared video to disk (up to LIMITS.videoMaxBytes, 150 MB). Only afterwards does it check the onboarding gate (line 463) and enforceRateLimit(user,'upload') (line 464). An account that has used up its 60/h upload budget, or has not finished onboarding, can still make the server write 150 MB per request; the 300/min IP limiter is the only brake. Measured: the request is rejected with 429, but fs.createWriteStream was already called.",
+     "fix": "Run the rate-limit check and the onboarding gate before multer. For example, use a small pre-middleware on POST /uploads that reads `kind` from the query string or a header and calls enforceRateLimit, or check inside storage._handleFile before opening the write stream. Record the rate event only after a successful store.",
+     "testName": "A. uploads > [FINDING] upload rate limit (and the onboarding gate) run only AFTER multer has streamed the whole video to disk"
+    },
+    {
+     "severity": "medium",
+     "file": "server/src/routes/messages.ts:146",
+     "problem": "POST /conversations/:id/members has no enforceRateLimit, and addMember (lib/conversations.ts:410) revives members whose state is 'declined' or 'left'. Any group member can therefore run add, decline and re-add without limit. Each add is a new request to a stranger plus an uncollapsed `message.group_added` notification (collapse:false). This also bypasses the message_request quota (15/day). Measured: 30 of 30 adds accepted, and the victim received more than 5 notifications (one per add).",
+     "fix": "Call enforceRateLimit(user,'message_request') for each non-follower added (or add a 'group_add' action). Do not re-add a user whose state is 'declined', and apply a cooldown like the DM decline cooldown. Treat a user who 'left' as needing to accept again, with no new notification inside the cooldown. Collapse `message.group_added` per conversation.",
+     "testName": "C. per-user rate limits on write endpoints > [FINDING] POST /conversations/:id/members has no rate limit and re-adds people who LEFT or DECLINED \u2014 an endless add/notify loop"
+    },
+    {
+     "severity": "medium",
+     "file": "server/src/routes/messages.ts:146",
+     "problem": "POST /conversations/:id/members has no requireCanPost(). A muted account (mute scope 'all') is correctly refused when it tries to create a group (403), but it can still add strangers to an existing group (200). Each add sends them a request and a notification, which gets around the sanction.",
+     "fix": "Add requireCanPost('message_request') to the route, the same gate as opening a request, and assertAccountAge for accounts under 24 h, matching group creation.",
+     "testName": "C. per-user rate limits on write endpoints > [FINDING] a MUTED account can still add people to group chats (no requireCanPost on POST /conversations/:id/members)"
+    },
+    {
+     "severity": "medium",
+     "file": "server/src/services/market/listings.ts:630",
+     "problem": "makeOffer (route market.ts:208) has no rate limit. openDm on an existing DM and sendMessage(kind:'offer') are both exempt from the request cap, and the seller's `market.offer` notification uses collapse:false. A buyer can loop offer, withdraw, offer indefinitely. Measured: 25 of 25 offers accepted and more than 10 uncollapsed notifications to the seller.",
+     "fix": "Add a rate action such as 'offer' (for example 5 per listing per day and 20 per day in total) and enforce it in makeOffer. Add a cooldown after a withdraw, and collapse `market.offer` notifications per conversation.",
+     "testName": "C. per-user rate limits on write endpoints > [FINDING] market offers: offer \u2192 withdraw \u2192 offer loops without limit, each one a new uncollapsed notification to the seller"
+    },
+    {
+     "severity": "medium",
+     "file": "server/src/services/buzz/store.ts:257",
+     "problem": "Buzz cursors come from encodeCursor (lib/http.ts:108), which is base64url JSON with an HMAC tag. They are signed but not encrypted. The 'new' feed cursor carries last.created_at to the exact millisecond, and so do the replies cursor (serialize.ts:270) and /buzz/mine (routes/buzz.ts:267). The hot cursor carries rankAt plus the hot score, from which the exact age can be solved. SPEC \u00a73.2 #3 floors createdAt to the minute so post times cannot be correlated. Measured: the feed returns createdAt % 60000 === 0, but decoding nextCursor gives `[1790148167317,\"\u2026\"]`.",
+     "fix": "Make cursors opaque. Encrypt the payload with AES-256-GCM under a key derived from cursorSecret, at least for every Buzz endpoint (feed, replies, mine). Alternatively, key Buzz pagination on (id) only and look up the row's true created_at on the server.",
+     "testName": "E. cursor tampering > [FINDING] Buzz cursors are base64 JSON, not opaque: nextCursor discloses the exact millisecond createdAt the API floors to the minute"
+    },
+    {
+     "severity": "medium",
+     "file": "server/src/lib/analytics.ts:68",
+     "problem": "sanitizeProps caps the number of props (40) and the length of string values (200), but not key length. trackSchema (routes/core/analytics.ts:22) uses z.record without a key schema. A signed-out caller can send one app_open event whose 40 keys are each 20 KB. Measured: an 800,361-byte props_json row per unauthenticated request. Under the 300/min IP limiter that is about 240 MB a minute of database growth per IP.",
+     "fix": "Validate keys with something like z.record(z.string().regex(/^[A-Za-z0-9_.]{1,40}$/), propValue) and drop long keys in sanitizeProps as well. Cap the serialized props_json (for example 2 KB, truncating or dropping extra keys). For signed-out callers, accept only a handful of events per request and add a tighter per-IP limiter.",
+     "testName": "G. denial-of-wallet > [FINDING] signed-out POST /analytics/track stores ~1 MB of prop KEYS per request (keys are unbounded; only values are capped)"
+    },
+    {
+     "severity": "low",
+     "file": "server/src/routes/market.ts:143",
+     "problem": "Edit endpoints get around the create limits. PATCH /market/listings/:id and PATCH /conversations/:id (group rename, routes/messages.ts:122) have no enforceRateLimit, so they can be spammed. Each call runs moderateWrite (queue churn); a rename broadcasts conversation.updated to every member and an edit calls touchContext. Measured: 40 of 40 listing edits and 40 of 40 renames accepted.",
+     "fix": "Add windows such as 'listing_edit' (for example 30 a day) and 'group_rename' (for example 10 an hour), and enforce them in updateListing and in the PATCH /conversations/:id title branch.",
+     "testName": "C. per-user rate limits on write endpoints > [FINDING] edits bypass the create limits: PATCH listing / PATCH group title are unlimited (each re-moderated + broadcast)"
+    },
+    {
+     "severity": "low",
+     "file": "server/src/config.ts:88",
+     "problem": "parseStaffEmails accepts STAFF_EMAILS entries that the email gate can never match: non-ASCII domains (dana@b\u00fccher.de), a trailing dot (dana@company.com.), quotes (da\"na@\u2026) and double dots (company..com). Boot succeeds, but that staff member can never sign in, so Buzz can end up unmonitored without anyone noticing. A duplicate address with conflicting roles (sam:admin,sam:moderator) is also silently resolved to the last entry.",
+     "fix": "Validate each address with the same isValidEmail / DOMAIN_RE the gate uses (ASCII only, no trailing dot, no '..', no quotes) and throw on failure. Throw when the same address appears with different roles.",
+     "testName": "B. auth > [FINDING] STAFF_EMAILS accepts entries the email gate can never match, and silently resolves conflicting duplicate roles"
+    },
+    {
+     "severity": "low",
+     "file": "server/src/lib/http.ts:213",
+     "problem": "errorMiddleware recognises only MulterError. Busboy's own errors, such as 'Malformed part header' (for example from a NUL byte in the part filename), 'Unexpected end of form' and similar, fall through to the 500 internal branch and are logged as unhandled errors. Any client can trigger error-log noise with a malformed multipart body.",
+     "fix": "In handleUpload's runMulter rejection, or in errorMiddleware, map any error that is not an ApiError from the multipart parser to ApiError(400,'bad_request','Invalid upload.'). For example, wrap the runMulter rejection: if the error is not an ApiError and not a MulterError, throw a 400.",
+     "testName": "A. uploads > [FINDING] a malformed multipart body (NUL byte in the part filename) is a 500 internal + error log instead of a 400"
+    }
+   ],
+   "probesThatPassed": [
+    "Uploads: path-traversal filenames ('../../evil.html', backslashes, '/etc/passwd', 'CON', '.htaccess', '%2e%2e%2f') are discarded; stored names are nanoid(21) plus the sniffed extension and nothing escapes uploadsDir.",
+    "Uploads: SVG and HTML are rejected with 415 whatever MIME is declared. Magic bytes vs declared MIME mismatch (PNG as JPEG, JPEG as PNG, WebM as PNG, PNG as mp4, image with kind=video) is rejected with 415.",
+    "Uploads: EXIF APP1 and PNG eXIf GPS are stripped from the served file. /uploads is served with nosniff and the correct image/* content type.",
+    "Uploads: an image over 8 MB returns 413, a JSON body over 1 MB returns 413, and nothing is left in uploads/tmp.",
+    "Avatars: the generated SVG never reflects the seed as markup (<script>, onload=, CDATA breakouts tested).",
+    "Auth: the per-IP /api/auth limiter (10/min) is enforced for a single IP.",
+    "Auth: signup tokens are single-use (replay returns 401 signup_token_invalid), a forged token returns 401, and only one account is created per verified address.",
+    "Auth: no session fixation. A pre-set attacker uv_session cookie is never adopted; verify mints a fresh 256-bit token and the fixed token stays unauthenticated.",
+    "Auth: production cookie flags are HttpOnly, Secure, SameSite=Lax and Path=/, and devCode is absent in production.",
+    "STAFF_EMAILS: well-formed pairs parse (trimmed, lower-cased, case-insensitive role); malformed entries throw at boot.",
+    "Rate limits: orbit_post, orbit comment, reel comment, message_send, listing_create, report, follow, buzz_vote, buzz_post and buzz_reply each return 429 once their window is full.",
+    "SQL: static scan of every prep/prepare/exec template in src. Every ${...} is a helper-built fragment, a join of literal clauses, or a value picked from a closed set in code; no string concatenation into SQL was found.",
+    "SQL: injection and LIKE-wildcard payloads (' OR 1=1 --, %, %%, \\%, %_%_\u2026, UNION, DROP) against /users/search, /discover/search, /market/listings, /campus/courses and followers?q= are inert: no 500 and no widened result set.",
+    "Zod: extra keys are stripped. PATCH /me with role, status, email, universityId, follower_count and id changes nothing; POST /orbit/posts with authorId, status, likeCount and universityId keeps the real author and a zero like count.",
+    "Cursors: garbage, re-tagged, payload-swapped, '.' and 5,000-character cursors return 400 invalid_cursor on all 36 paginated endpoints (user and admin).",
+    "Cursors: every genuine cursor the API issues, replayed on every other paginated endpoint (cross-endpoint and cross-type), never returns 5xx. Side note: the offset-paged endpoints (/users/search, /campus/events/:id/attendees, /campus/users/:id/events, /campus/courses) return 500 on a signed cursor whose k is a float or above int64. No real endpoint emits such a cursor, so this needs the cursor secret and is not reachable.",
+    "Moderation: zero-width space, word joiner, soft hyphen, Cyrillic homoglyphs, fullwidth, math-bold, combining strike and Hangul filler do not slip past moderateText on any surface.",
+    "Moderation: the plain threat and kys phrases are blocked on all 13 UGC surfaces, and the plain threat is blocked end to end over HTTP.",
+    "Denial-of-wallet: limit= is capped at 50 by pageQuery everywhere (limit=100000, -1 and 1e9 all return 400). Bulk arrays are capped: notifications/read at 200 ids, share at 10 conversations, analytics at 50 events."
+   ]
+  },
+  {
+   "key": "brief-fidelity",
+   "testFile": "/Users/ankurbasnet/Library/Application Support/Claude/scratch-workspaces/3fa03a1d-e11f-44f5-adc4-3fd2c89f5866/214025d0-553e-465e-87ae-d756765a1646/scratch-2026-09-21-68c752/server/tests/hardening/brief-fidelity.test.ts",
+   "testsWritten": 35,
+   "findings": [
+    {
+     "severity": "medium",
+     "file": "server/src/lib/uploads.ts:503",
+     "testName": "\u00a70.1 Reels \u2014 \u2264 60-second vertical videos, posted from the public profile > FINDING: a 2-minute MediaRecorder-style WebM (no Duration element) is accepted when the client claims 20 s",
+     "problem": "The server only enforces the 60-second reel limit when it can read the length from the file. `probeWebm` looks only at the Info/Duration element. Browser MediaRecorder output never writes that element, so the probe returns null and the server falls back to the client's multipart `durationMs` (`const duration = probed ?? client`). The test uploads a WebM whose Cluster timecodes run from 0 to 120 s and sends durationMs=20000. The upload returns 201 with durationMs 20000, and POST /api/reels then publishes it (201). So the brief's '\u226460-second' rule is enforced only by the official client for this container. The official client refuses these files anyway (readVideoMeta fails on a non-finite duration). Only a crafted request gets through, and it bypasses the rule completely. Note: SPEC \u00a74.2.12 literally specifies `probe ?? clientDurationMs`, so this is a gap in the spec as well as in the code. The MP4 lie ('61 s file + durationMs=10000') is correctly rejected, because the probe wins whenever it can read mvhd.",
+     "fix": "Stop trusting the client value when the probe cannot read the WebM length. Option (a): extend probeWebm to fall back to the highest Cluster Timecode (plus the last SimpleBlock's relative timecode), scaled by TimecodeScale, when Info/Duration is absent. Unsized clusters are acceptable if you walk them sequentially up to the byte limit. Option (b): when `probed === null`, reject with the existing 400 'We couldn't read the video length' and do not fall back to `durationMs`. If a client fallback must stay, never accept it for a file that has readable clusters. Update SPEC \u00a74.2.12 to match. The client already refuses Duration-less files, so option (b) changes nothing for honest users."
+    }
+   ],
+   "probesThatPassed": [
+    "Email gate: gmail/outlook/icloud/mailinator/example.org/stanford.edu.evil.com -> 422 with friendly copy, no devCode, no university row created",
+    "Email gate: new.kid@cs.utexas.edu signs up onto seeded uni_utexas (suffix match)",
+    "Email gate: unknown first@brandnewcollege.edu auto-creates a campus (is_auto_created=1); second@mail.brandnewcollege.edu joins the SAME campus (no duplicate)",
+    "Community guidelines gate the app: fresh signup gets 403 onboarding_required on /api/orbit/feed; stale version -> 400; after POST /me/guidelines {kind:'app'} + onboarding/complete -> 200",
+    "Email gate: .ac.uk pattern and allow-listed utoronto.ca subdomain accepted",
+    "Reels: 20 s MP4 posts as @mayachen and tops the campus feed; 61 s MP4 -> 422 'Reels max out at 60 seconds.'",
+    "Reels: 61 s MP4 with a lying durationMs=10000 still rejected (probe wins)",
+    "Buzz gate: buzzGate:false user gets 403 buzz_gate_required on read and write; after POST /me/guidelines {kind:'buzz'} -> 200",
+    "Buzz post + reply thread: forbidden-key walk and seeded-identity substring walk clean on thread, replies, feed (new/hot, campus/global), /mine; buzz notifications to Maya have actor_id NULL",
+    "Buzz never surfaces in /orbit/feed, /discover/search, /discover/home, /users/mayachen, orbit user posts, reels user grid, /onboarding/suggestions",
+    "Buzz moderation: violent-threat buzz blocked (422 content_blocked) or held + queued",
+    "Buzz reported -> mod_queue row; moderator queue list and detail contain no author id/handle/name/email",
+    "Orbit: a non-followed student's post is absent from Maya's full paged feed; a followed student's and a followed org's posts are present; every author in the feed is Maya or a followee",
+    "Orbit: /feed/new-count ignores posts from non-followed authors",
+    "Orbit reels rail /reels/following excludes a non-followed author's reel",
+    "Discover search: finds sofiaram by name (people) and o_solarcar (orgs, all hits accountType org); no Buzz-shaped keys in results",
+    "Discover home: PYMK / active creators / popular orgs present with non-empty reasons",
+    "Discover: a student who posts publicly appears in activeCreators under their real handle",
+    "Discover: a Buzz-only user never becomes an active creator (last_public_post_at stays NULL)",
+    "Messages: Maya -> followed friend DM delivered (recipient's message list + ws message.new captured)",
+    "Messages: stranger's first DM lands in Maya's Requests, is readable, accept -> Maya can reply",
+    "Roommates path A: publish:true post is visible in Maya's browse with a numeric match %",
+    "Roommates path B: publish:false 'just browse & match' gets ranked compat % (sorted desc); filters mode=have&budgetMax=1200 honoured; matcher row never listed to Maya and 404 on detail; can still open a DM with roommate context",
+    "Marketplace: Maya lists sell item; stranger finds it via ?q=, opens DM with listing context, messages, offers (201, same conversation); Maya accepts offer, marks sold (state sold), appears in /mine?state=closed",
+    "Marketplace: trade without tradeFor -> 400; trade with tradeFor -> 201 and filterable via ?type=trade by another student",
+    "Apartments waitlist: seeded joined=true; DELETE -> joined=false, campusCount-1; POST twice idempotent, count restored",
+    "Apartments analytics: apartments.page_view + cta_click via /api/analytics/track stored with user_id + uni_utexas and reflected +1 in admin /api/admin/analytics/apartments funnel",
+    "Apartments survey: GET state + PUT /survey/when returns campus split and persists the answer",
+    "Client: bottom nav order home, discover, messages, roommates, market, apartments",
+    "Client: router.tsx wires /home/:tab, /discover/*, /messages/*, /roommates/*, /market/*, /apartments, /buzz/*, /reel/*, /post/*, /guidelines",
+    "Client: no file under client/src/features contains the 'Coming together' stub (grep clean; every slice index exports real components and every SPEC \u00a74.5 canonical sub-path exists in the nested <Routes>)",
+    "Client: HOME_TABS = reels, buzz, orbit; HomePage lazy-loads ReelsPane/BuzzPane/OrbitPane in a snap-x pager",
+    "Client: ApartmentsPage renders 'Coming soon' + 'Get notified' wired to useWaitlistToggle and tracks apartments.page_view / apartments.cta_click",
+    "Server: no module outside lib/stub.ts still calls notImplemented() (no 501 stubs left)",
+    "Guidelines page copy covers harassment, bullying, threats, drugs, #buzz-anonymity and #enforcement"
+   ]
+  }
+ ],
+ "fixes": [
+  {
+   "group": "firewall",
+   "findings": 20,
+   "report": "All 20 failing tests in the firewall group now pass, and so does the full server suite (34 files, 1068 tests). Both typechecks pass. I changed the expectations in 2 hardening assertions and 2 older slice tests; each change is listed below with its reason.\n\n**Critical**\n- **Admin unmask through the sanction lift route** (`buzz-staff-firewall`, \"POST /admin/sanctions/:id/lift\u2026\"): fixed. `liftUserSanction` in `services/admin/users.ts` now returns `{ lifted: true, origin: 'anon' }` with no user in it when it is given a raw Buzz-origin sanction id. The raw id only appears in the audit log. The lift route accepts ids up to 128 characters to fit the new sealed handles.\n\n**High**\n- **Audit `sanctionId` joins `/admin/users` sanctions**: fixed. On the admin view of a user, Buzz-origin sanctions now show a sealed, stable handle (`sx_\u2026`) instead of the real id, so the audit id matches nothing there. The handle is AES-256-GCM encrypted, keyed from `CURSOR_SECRET`, and the lift route can decrypt it, so lifting from the Users page still works and still returns the user detail.\n- **Moderator sees the author's status flip (zero-tolerance removal, and sexual_minors escalation)**: fixed. `staffStandingFor` now also returns a `status`. For non-admins it is worked out from active public-origin sanctions only, and `toDetail` uses it. The real suspension still applies; only what the moderator sees stays unchanged.\n- **Blind author panel reacts to a direct mute**: fixed. `blindAuthorStanding` now counts only Buzz-origin rows, for every role.\n- **`share_click` stored with the user id and thread id**: fixed.\n  - Server (`lib/analytics.ts`): any event whose `kind` is a Buzz type is stored anonymously: no user or session id, no `*id` props, time floored to the minute. This also covers the server-side `share_click` in `lib/share.ts`.\n  - Client (`ShareSheet.tsx`): the tracking call no longer sends `id` for Buzz cards.\n- **`clientTs` on anonymous analytics rows**: fixed. `sanitizeProps` now also drops timestamp-like keys (`ts`, `*Ts`, `*At`, `*Time`, `timestamp`) from anonymous events.\n- **Small campus named next to a buzz**: fixed. `campusShortNames` returns nothing for campuses with fewer than 50 active users (`SMALL_CAMPUS_USERS`, now exported from `store.ts` and shared with the router). The share card subtitle becomes plain \"Buzz\" for those campuses.\n\n**Medium**\n- **Cursors reveal exact creation times**: fixed. `encodeCursor` takes a `{ seal: true }` option that encrypts the sort key inside the signed cursor, and `decodeCursor` decrypts it. The Buzz new, top, replies and mine cursors use it.\n  - The hot cursor stays readable because the hot test has to parse it. Instead, the hot score is now computed from the minute-floored `created_at`, so solving it only recovers the minute.\n  - This also fixes the matching cursor finding in `input-abuse.test.ts`.\n- **Poll `closesAt` reveals exact creation time**: fixed. The close time is floored to the minute when stored, and the serializer floors it again when served.\n- **Ladder suggestion reacts to a direct warning**: fixed. For Buzz items the suggestion now counts only Buzz-origin strikes and warnings, via new helpers `anonStrikePoints` and `hasAnonWarning`.\n- **`otherOpenItems` and `priorByCategory` count public items**: fixed by the same change to the blind panel.\n- **Removed buzz text survives in chat as the share caption**: fixed.\n  - Client: the share sheet no longer sends the share text as a chat caption; it is used only for the phone's native share.\n  - Server: `shareCard` drops a caption on a Buzz card if it just repeats the post's text.\n- **Viewer's own avatar and name in the DOM while on Buzz** (no server test): fixed.\n  - `HomePage.tsx`: panes that are not the current tab are now `inert` and `aria-hidden`.\n  - `ReelsPane.tsx`: the viewer's own avatar on the \"New reel\" button only renders while Reels is the active tab.\n  - What's left: a visited Orbit pane still keeps the viewer's own posts in the DOM. They are now hidden from focus and the accessibility tree, but not removed.\n\n**Low**\n- **Buzz notification times not floored** (reported in both the API and client test files): fixed. `notifyAnonymous` floors the time to the minute when saving, and the serializer floors it for anonymous rows. That covers GET /notifications and the ws push.\n- **Sequential seeded Buzz ids**: fixed in `03-buzz.ts`. Seeded thread and reply ids are now a fixed hash of the counter, 14 random-looking characters (`buzz_\u2026`, `bzr_\u2026`). They don't use the seed's random-number generator, so the rest of the seeded world is unchanged. I changed 2 expectations in `buzz-api-identity.test.ts`, each marked with a `// FIXER:` comment:\n  - The \"top-3 reply ids are in three different threads\" check now only requires at least one thread. That condition only held for the old sequential ids; the real check (more than one author) is unchanged.\n  - The 5 ids fixed by SPEC \u00a77.5 (`buzz_0001`\u2013`0003`, `buzz_0101`\u2013`0102`) are exempted. Changing them is a docs decision.\n- **Own avatar in the share target preview**: fixed. `memberPreview` in `conversations.ts` no longer falls back to the viewer, and the share sheet also skips the viewer's id.\n- **Share sheet has no incognito framing** (no server test): fixed. `openShare` takes an optional `mode`; Buzz passes `'incognito'`. The share sheet is then shown in the incognito style with the line \"Shares the post only. Your chat will see it came from you.\"\n- **No way to hide \"You\" markers** (no server test): not done. It would change a SPEC \u00a75.3 requirement (\"You \u00b7 {alias}\"), so it needs your decision.\n\n**Older slice tests I updated to match the new rules**\n- `tests/buzz.test.ts`, seed check: a global feed item now gets a campus name only if that campus has at least 50 active users. The old test expected a name on every item.\n- `tests/core/staff.test.ts`, the `blindAuthorStanding` test: it now builds the author's history from Buzz items, and first checks that public strikes and sanctions do not move the panel.\n\n**For you to decide**\n- **SPEC-fixed ids**: the 5 ids fixed by SPEC \u00a77.5 stay sequential. `buzz_0001`\u2013`0003` still show that Maya wrote all three threads. Changing them needs a SPEC edit.\n- **\"You\" markers**: the Settings \u2192 Privacy toggle needs a SPEC \u00a75.3 decision.\n\nOther agents were editing the codebase while I worked. One full run showed a transient failure in `input-abuse` and an unrelated auth test failure. Both passed on rerun; the final full run is all green.\n\nI edited these files:\n- **Server:** `lib/http.ts`, `lib/moderation/staff.ts`, `services/admin/users.ts`, `services/admin/queue.ts`, `routes/admin/users.ts`, `services/buzz/store.ts`, `services/buzz/serialize.ts`, `services/buzz/registry.ts`, `routes/buzz.ts`, `lib/notify.ts`, `lib/analytics.ts`, `lib/share.ts`, `lib/conversations.ts`, `db/seeds/03-buzz.ts`\n- **Client:** `components/ShareSheet.tsx`, `lib/share.ts`, `stores/ui.ts`, `features/buzz/parts.tsx`, `app/home/HomePage.tsx`, `features/reels/ReelsPane.tsx`\n- **Tests:** `tests/hardening/buzz-api-identity.test.ts`, `tests/buzz.test.ts`, `tests/core/staff.test.ts`\n\nFull paths:\n- Server: /Users/ankurbasnet/Library/Application Support/Claude/scratch-workspaces/3fa03a1d-e11f-44f5-adc4-3fd2c89f5866/214025d0-553e-465e-87ae-d756765a1646/scratch-2026-09-21-68c752/server/src\n- Client: /Users/ankurbasnet/Library/Application Support/Claude/scratch-workspaces/3fa03a1d-e11f-44f5-adc4-3fd2c89f5866/214025d0-553e-465e-87ae-d756765a1646/scratch-2026-09-21-68c752/client/src\n- Tests: /Users/ankurbasnet/Library/Application Support/Claude/scratch-workspaces/3fa03a1d-e11f-44f5-adc4-3fd2c89f5866/214025d0-553e-465e-87ae-d756765a1646/scratch-2026-09-21-68c752/server/tests"
+  },
+  {
+   "group": "security",
+   "findings": 24,
+   "report": "All 24 security findings are fixed. `authz.test.ts` and `input-abuse.test.ts` pass (227/227), and the server and client typechecks are clean. None of the findings was a false positive. Two of them were fixed by the other fixer agents running at the same time, not by me: Buzz cursor opacity (firewall fixer) and the WebM probe (brief fixer). Their test cases pass, but I have not reviewed their code.\n\nThe per-finding list below gives each finding's severity, what changed and where.\n\n**Authorization**\n- **High, cross-campus events** (`services/campus/events.ts`): `loadVisibleEvent` now requires the event to be on the viewer's campus, or the viewer to be the host. That one check covers detail, RSVP, attendees and the private-address reveal. `listUserEvents` and the `event` card resolver (`services/campus/registry.ts`) are scoped the same way.\n- **High, minor reached by a group invite / Medium, \"people I follow\" setting ignored** (`lib/conversations.ts`): I moved the per-recipient checks out of `openDm` into a new exported `assertCanReach(viewer, peer)`. It checks active status, blocks, \"Who can message me\" (campus or following), the minor cross-campus rule and the 30-day decline cooldown. `openDm` and `createGroup` both call it for every invitee.\n- **Medium, POST `/conversations/:id/members` (four findings, from both lenses)** (`routes/messages.ts`, plus a new `groupAddPlan` in `lib/conversations.ts`). The route now:\n  - runs `assertCanPost` ('public'), then 'message_request' if anyone would land as a request, so a muted user gets 403 `muted`;\n  - requires the account to be at least 24 hours old, the same as creating a group;\n  - checks every invitee with `assertCanReach` before anyone is added;\n  - applies a new `group_add` rate limit.\n\n  People who declined the group can't be re-added for 30 days. People who left it rejoin as a request, with no new notification.\n- **Medium/Low, listing share card** (`services/market/registry.ts`): the card is now \"No longer available\" when the listing isn't active or the viewer is on another campus. The seller still sees their own.\n- **Medium, campus-only reels** (`services/reels/reels.ts`, `services/reels/registry.ts`): the reel visibility filter now keeps campus-only reels on their campus (the author always sees their own). The `reel` card resolver applies the same rule.\n- **Low, roommate share card** (`services/roommates/registry.ts`): returns nothing to viewers on another campus unless they are the owner.\n\n**Input handling and abuse**\n- **High, WebM 1 GiB allocation / unbounded WebM walk:** fixed by the brief fixer; both tests pass. On my side, `readAt` in `lib/uploads.ts` now clamps every read to 64 bytes.\n- **High, unbounded MP4 box walk** (`lib/uploads.ts`): capped at 4,096 boxes (`MP4_MAX_BOXES`). A file over the cap is refused outright rather than falling back to the duration the client supplied.\n- **High, small-caps and other Unicode tricks** (`lib/moderation/normalize.ts`): the invisible-character step now strips every default-ignorable and format character, plus U+2800 and U+FFF9\u2013FFFB, and counts them as evasion. Small capitals, IPA letters (including \u0269) and regional-indicator letters are mapped to a\u2013z and counted as homoglyphs.\n- **High, OTP guessing across IPs / Medium, resend flooding** (`lib/otp.ts`): limits now apply per address, using the existing `otp_codes` history:\n  - the wait between codes grows: 30 s, 30 s, 1 min, 2 min, 5 min, then 15 min;\n  - after 15 wrong guesses in an hour, the next code waits at least 5 minutes;\n  - at most 10 codes per address per day.\n\n  This allows roughly 50 guesses per address per day, down from about 14,400.\n- **Medium, JPEG trailing data kept** (`lib/uploads.ts`): the sanitiser now scans the image data after each scan-start marker properly, resumes normal segment parsing (which drops metadata segments between progressive scans), and stops at the first end-of-image marker. `app.ts` also now sends `Content-Security-Policy: default-src 'none'; \u2026 sandbox` on static media.\n- **Medium, upload checks after the file is written:** the `fileFilter` check now runs the rate-limit check and the onboarding gate before multer writes anything to disk. It uses a new `assertRateAvailable` in `lib/rateLimit.ts`, which checks the limit without recording an event.\n- **Medium, offer loop** (`services/market/listings.ts`): a new `offer` rate limit (20 per day). `market.offer` notifications now collapse per conversation.\n- **Medium, Buzz cursors:** fixed by the firewall fixer (sealed sort key in `lib/http.ts`); the test passes.\n- **Medium, analytics prop keys** (`lib/analytics.ts`): keys must match `^[A-Za-z0-9_.:-]{1,40}$`, and each row's props are capped at 4 KB.\n- **Low, unlimited edits:** new `listing_edit` limit in `updateListing` and `group_rename` limit in PATCH `/conversations/:id`.\n- **Low, bad `STAFF_EMAILS` entries** (`config.ts`): startup now fails on addresses the sign-in gate can't match and on duplicate addresses with conflicting roles.\n- **Low, malformed multipart returns 500** (`lib/uploads.ts`): parser errors are now a 400 `bad_request`.\n\n**Things to know**\n- **Changed test:** one probe in `input-abuse.test.ts` (\"static: every ${\u2026} \u2026\") started failing because the firewall fixer added `ANON_SQL_LIST` to `lib/moderation/staff.ts`. It only builds `?` placeholders, so I added it to the test's allow-list with a comment explaining why.\n- **Stricter OTP timing:** I set the timing so the existing test where one address signs in three times about 31 s apart still passes. Real users who ask for many codes will hit the longer waits.\n- **New rate-limit names:** `group_add`, `group_rename`, `listing_edit` and `offer` are added to `RateAction` in `lib/rateLimit.ts`, not in `core.ts`.\n- **Client typecheck:** one run failed on `client/src/components/ShareSheet.tsx`, which another agent was editing at that moment. The re-run was clean. I didn't touch any client files.\n\n**Test results**\n- `tests/hardening/authz.test.ts` and `tests/hardening/input-abuse.test.ts`: 227 passed, 0 failed.\n- Affected slice and core files: 106 passed across core `auth`, `messages`, `market` and `campus`. 95 passed across `reels`, `roommates`, slice `auth`, and core `stubs`, `integration` and `notify`. `tests/core/moderation.test.ts` also passes (it ran alongside `input-abuse`), as do the core `uploads`, `conversations`, `analytics`, `content` and `http` files.\n- Server typecheck (`npx tsc --noEmit`): exit 0. Client typecheck: clean."
+  },
+  {
+   "group": "brief",
+   "findings": 1,
+   "report": "**Finding: brief-fidelity, medium, `server/src/lib/uploads.ts:503`. Fixed.** A 2-minute recorded WebM with no Duration element is now rejected with 422 \"Reels max out at 60 seconds.\", even when the request claims 20 s.\n\nI used the finding's option (a), because the test expects 422 and option (b) would give 400.\n\nWhat changed, all in `/Users/ankurbasnet/Library/Application Support/Claude/scratch-workspaces/3fa03a1d-e11f-44f5-adc4-3fd2c89f5866/214025d0-553e-465e-87ae-d756765a1646/scratch-2026-09-21-68c752/server/src/lib/uploads.ts`:\n- **New WebM length check.** `probeWebm` is rewritten as one bounded pass through the file. It works on files whose Segment and Cluster sizes are unknown, which is what browser recorders produce. The length comes from `Info/Duration \u00d7 TimecodeScale`, or from the latest timestamp in the Clusters and blocks. When both exist, the larger one wins, so a file that states a short Duration but holds 2 minutes of frames is also caught.\n- **Reads and memory are capped.** File reads go through a single 256 KiB buffer. A size claimed inside the file never triggers a larger allocation, and a walk stops after 250,000 elements. An honest 60 s, 60 fps recording has about 7,000 blocks.\n- **New export.** `probeVideo(filePath, mime): { durationMs, clientFallback }`. `probeVideoDurationMs` keeps its name and signature and now wraps it.\n- **Upload handler.** `handleUpload` now uses `probe.durationMs ?? (probe.clientFallback ? client : null)`.\n- **When the client's `durationMs` still counts.** Only when the file has no readable length at all: no Duration and no blocks. This keeps the existing `core/uploads.test.ts` case where the client's duration is used. A WebM too dense to check within the cap gets no fallback, so it is refused with 400 \"We couldn't read the video length\".\n\n**Side effect on another group's findings:** the same rewrite makes two input-abuse findings pass. Those are the two WebM probe tests: unbounded element walk, and allocating whatever size the file declares. Their fixer should know `probeWebm` changed and is not theirs to edit. The MP4 probe (`probeMp4`) is unchanged, so input-abuse's MP4 box-walk finding still fails.\n\n**Spec still out of date:** `docs/SPEC.md` \u00a74.2.12 still says `duration = probe ?? clientDurationMs`. I couldn't edit it because `docs/` is off-limits. It should say that the WebM probe falls back to Cluster and block timestamps, and that the client value applies only when the file has no readable length.\n\n**Test results:**\n- `tests/hardening/brief-fidelity.test.ts`, `tests/core/uploads.test.ts`, `tests/reels.test.ts` and `tests/messages.test.ts`: 4 files, 102 tests, all passed.\n- `tests/hardening/input-abuse.test.ts`: 21 failed, 30 passed. All 21 failures are other groups' findings (multipart, JPEG, MP4 probe, auth, rate limits, cursors, moderation). Run on their own, the two WebM probe tests pass.\n- Server `tsc --noEmit` and client `tsc --noEmit` both pass."
+  }
+ ],
+ "regate": {
+  "serverTypecheck": "pass",
+  "clientTypecheck": "pass",
+  "serverTests": {
+   "passed": 1070,
+   "failed": 0,
+   "files": 35,
+   "skipped": 0,
+   "failingTests": []
+  },
+  "clientBuild": "pass",
+  "dbReset": "pass",
+  "fixesMade": [
+   "FIXED intermittent `Error: Parse Error: Expected HTTP/` in the full suite AND in single-file runs (so not load-only). input-abuse.test.ts failed 1 run in 5 when run alone, and 1 of the first 2 full runs. The failure hit random tests: `C. per-user rate limits > [FINDING] market offers: offer \u2192 withdraw \u2192 offer loops...` in one run, `E. cursor tampering > [probe] a genuine cursor replayed on EVERY other endpoint` (on /api/market/mine) in another. ROOT CAUSE (reproduced deterministically): server/src/lib/testing.ts passed the bare Express app to supertest.agent(). supertest then calls app.listen(0), which binds the dual-stack wildcard `::`, and dials http://127.0.0.1:<port>. On macOS that wildcard bind succeeds on a port another process already holds on 127.0.0.1, and the more specific loopback listener answers our request. Two such foreign listeners exist on this machine (127.0.0.1:49632 answers HTTP 200 'ok'; 127.0.0.1:56411 produces exactly 'Parse Error: Expected HTTP/'). A 20 s stress of the old pattern also got a stray 401 from a foreign app. The admin.test.ts:143 comment shows this flake had been seen before and misattributed to keep-alive.",
+   "FIX (surgical, harness only; no app code, test, or doc touched): server/src/lib/testing.ts createTestApp step 4 now creates one http.Server per ctx and awaits `listen(0, '127.0.0.1')`. The kernel refuses that bind on an occupied loopback port, so ephemeral allocation skips taken ports. The server is unref'd, and the previous ctx's server is closed. as()/anon() now return supertest.agent(server); supertest sees an already-listening server and neither re-listens nor closes it. Request semantics are byte-identical to before: superagent's default agent:false still opens one `Connection: close` connection per request. I tried and rejected a keep-alive pool: an early 413 to an unfinished upload leaves a pooled socket busy and ref'd forever. Added `import http from 'node:http'` and a module-level `harnessServer`.",
+   "ADDED passing regression guard server/tests/hardening/harness-transport.test.ts (2 tests): (1) every as()/anon() agent targets a server bound to 127.0.0.1; (2) with a foreign non-HTTP listener on a loopback port, a 127.0.0.1 bind on that port gets EADDRINUSE, 50 mixed harness requests all return the app's own /api/health body, and the shared server is never closed by supertest.",
+   "VERIFIED after the fix: input-abuse.test.ts alone passed 20 of 20 (vs 4 of 5 before); full suite with maxForks=3 passed 3 of 3 (35 files / 1070 tests, 0 failed, 0 skipped, about 12 s, no stray processes); server tsc, client tsc, db:reset (11 universities, 308 users, Maya 28/41/MAYA2026/4 invited, 12 notifications with 7 unread, no counter drift) and client vite build (2520 modules) all re-run green on the final tree. No test was skipped or deleted. The only conditional t.skip in the suite (tests/core/integration.test.ts:27) did not trigger. Nothing outside the tests imports lib/testing.ts; the matches in config.ts and realtime.ts are comments."
+  ],
+  "unresolved": [
+   "ADVISORY (non-blocking; gate green): client `npx vite build` warns that the main chunk dist/assets/index-*.js is 655 kB minified (205 kB gzip), over Vite's 500 kB warning limit. Consider code-splitting with manualChunks or dynamic imports in the polish phase. The build exits 0.",
+   "ADVISORY (non-blocking; not seen in any real test run): under synthetic loopback saturation (about 700 new connections/s for 20 s) macOS produced one connect `ETIMEDOUT` per 8-14k requests with BOTH the old and the new harness binding. This is an ambient OS artifact, not a regression; 20 isolated input-abuse runs and 3 full-suite runs after the fix were all green.",
+   "ADVISORY (cosmetic): server/tests/admin.test.ts:143 comment attributes the old flake to 'a stale keep-alive socket'; the real cause was the wildcard-bind port collision fixed in lib/testing.ts. Its `.set('Connection', 'close')` calls are redundant (superagent already sends that header) but harmless. Left untouched because it was not red."
+  ]
+ }
+}

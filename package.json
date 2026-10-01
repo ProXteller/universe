@@ -1,0 +1,16 @@
+{
+  "name": "universe",
+  "private": true,
+  "version": "0.1.0",
+  "description": "UniVerse — the campus super-app (university email required)",
+  "scripts": {
+    "dev": "concurrently -n api,web -c magenta,cyan \"PORT=4000 npm --prefix server run dev\" \"npm --prefix client run dev\"",
+    "db:reset": "npm --prefix server run db:reset",
+    "typecheck": "npm --prefix server run typecheck && npm --prefix client run typecheck",
+    "test": "npm --prefix server test",
+    "build": "npm --prefix client run build"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  }
+}
