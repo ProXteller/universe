@@ -9,6 +9,9 @@ CREATE TABLE IF NOT EXISTS buzz_posts (
   author_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,     -- moderation only; never serialized
   university_id TEXT NOT NULL REFERENCES universities(id) ON DELETE CASCADE,
   text TEXT NOT NULL DEFAULT '',
+  title TEXT NOT NULL DEFAULT '',                                     -- root only: optional headline
+  media TEXT NOT NULL DEFAULT '[]',                                   -- root only: JSON BuzzMedia[] (own /uploads/ urls)
+  scope TEXT NOT NULL DEFAULT 'campus',                               -- root only: 'campus' | 'global' (separate feeds)
   prompt_id TEXT NULL,
   status TEXT NOT NULL DEFAULT 'active',                              -- ContentStatus
   auto_hide_immune INTEGER NOT NULL DEFAULT 0,
@@ -27,6 +30,7 @@ CREATE INDEX IF NOT EXISTS buzz_posts_campus ON buzz_posts(university_id, status
 CREATE INDEX IF NOT EXISTS buzz_posts_thread ON buzz_posts(root_id, created_at);
 CREATE INDEX IF NOT EXISTS buzz_posts_author ON buzz_posts(author_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS buzz_posts_parent ON buzz_posts(parent_id);
+-- the (scope, …) index is created by services/buzz/schema.ts AFTER it adds the column to databases made before it existed
 
 CREATE TABLE IF NOT EXISTS buzz_votes (
   post_id TEXT NOT NULL REFERENCES buzz_posts(id) ON DELETE CASCADE,

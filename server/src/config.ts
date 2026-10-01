@@ -123,7 +123,8 @@ function build(): Config {
     env,
     port: Number.isFinite(port) && port > 0 ? port : 4000,
     dbPath: nonEmpty(process.env.DB_PATH) ?? path.join(DATA_DIR, 'universe.db'),
-    uploadsDir: path.join(SERVER_ROOT, 'uploads'),
+    // production keeps uploads next to the database on the data disk (UPLOADS_DIR), never inside a release folder
+    uploadsDir: nonEmpty(process.env.UPLOADS_DIR) ?? path.join(SERVER_ROOT, 'uploads'),
     seedMediaDir: path.join(SERVER_ROOT, 'seed-media'),
     buzzAliasSecret: secrets.buzzAliasSecret,
     cursorSecret: secrets.cursorSecret,

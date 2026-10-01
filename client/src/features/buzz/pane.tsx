@@ -8,8 +8,9 @@
  * After acceptance: sort / scope row, Daily Campus Prompt card, cold-start banner (campus feed empty on the first page →
  * Global + dismissible banner), feed of BuzzCards with skeleton / empty / error / infinite scroll, FAB (pen + mask), composer.
  */
-import { useEffect, useRef, type FC, type RefObject } from 'react';
-import { Compass, PenLine, Sparkles, VenetianMask } from 'lucide-react';
+import { useEffect, useRef, useState, type FC, type RefObject } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { Compass, PenLine, Search, Sparkles, VenetianMask } from 'lucide-react';
 import type { FeedScope } from '@shared/core';
 import type { Buzz, BuzzSort, BuzzTopWindow } from '@shared/buzz';
 import { Button, ChipGroup, EmptyState, ErrorState, FAB, InfiniteSentinel, SegmentedControl } from '@/ui';
@@ -17,6 +18,8 @@ import { CampusScopeToggle, ColdStartBanner } from '@/components';
 import type { HomePaneProps } from '@/app/contracts';
 import { track } from '@/lib/analytics';
 import { isApiError } from '@/lib/api';
+import { cn } from '@/lib/cn';
+import { routes } from '@/lib/links';
 import { useMe } from '@/lib/session';
 import { useHomeTab } from '@/stores/home';
 import { useBuzzFeed, useBuzzMeta } from './api';
@@ -26,6 +29,34 @@ import { BuzzGatePanel, useBuzzGate } from './gate';
 import { ensureBuzzStoreReset, useBuzzStore } from './store';
 
 const PANE_TOP = 'calc(var(--topbar-h) + var(--safe-top) + 8px)';
+
+/** Scrolled less than this from the top, the filter bar always shows. */
+const BAR_ALWAYS_UNDER = 48;
+const DIRECTION_SLOP = 6;
+
+/**
+ * The sort / scope / search bar slides away while the feed scrolls down and comes back as soon as it scrolls up
+ * (or reaches the top), like the bars in Twitter / Reddit.
+ */
+function useBarHidden(scrollRef: RefObject<HTMLDivElement | null>): boolean {
+  const [hidden, setHidden] = useState(false);
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    let last = el.scrollTop;
+    const onScroll = (): void => {
+      const y = el.scrollTop;
+      const dy = y - last;
+      if (y <= BAR_ALWAYS_UNDER) setHidden(false);
+      else if (dy > DIRECTION_SLOP) setHidden(true);
+      else if (dy < -DIRECTION_SLOP) setHidden(false);
+      if (Math.abs(dy) > DIRECTION_SLOP) last = y;
+    };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => el.removeEventListener('scroll', onScroll);
+  }, [scrollRef]);
+  return hidden;
+}
 
 const SORTS: { value: BuzzSort; label: string }[] = [
   { value: 'hot', label: 'Hot' },
@@ -78,6 +109,8 @@ const Feed: FC<{ active: boolean; scrollRef: RefObject<HTMLDivElement | null> }>
   const feed = useBuzzFeed(sort, window, scope);
   const meta = useBuzzMeta(scope);
   const tracked = useRef<string>('');
+  const navigate = useNavigate();
+  const barHidden = useBarHidden(scrollRef);
 
   useEffect(() => {
     const key = `${sort}:${scope}`;
@@ -103,9 +136,33 @@ const Feed: FC<{ active: boolean; scrollRef: RefObject<HTMLDivElement | null> }>
   return (
     <div className="relative h-full">
       <div ref={scrollRef} className="h-full overflow-y-auto overscroll-y-contain" style={{ paddingTop: PANE_TOP }}>
-        <div className="sticky z-(--z-sticky) flex items-center justify-between gap-2 bg-canvas/85 px-4 py-2 backdrop-blur-md" style={{ top: 'calc(var(--topbar-h) + var(--safe-top))' }}>
-          <SegmentedControl<BuzzSort> aria-label="Sort" size="sm" value={sort} onChange={setSort} options={SORTS} />
-          <CampusScopeToggle value={scope} onChange={onScope} size="sm" />
+        <div
+          className={cn(
+            'sticky z-(--z-sticky) flex flex-col gap-2 bg-canvas/85 px-4 py-2 backdrop-blur-md transition-[translate,opacity] duration-200 ease-out motion-reduce:transition-opacity',
+            barHidden && 'pointer-events-none -translate-y-full opacity-0',
+          )}
+          // The scroller's padding-top (PANE_TOP) already clears the top bar, and a sticky offset counts from inside that
+          // padding — so -8px pins the bar flush under the top bar (the old `topbar-h` offset parked it 52px too low,
+          // over the first card, leaving an empty band above it).
+          style={{ top: -8 }}
+          aria-hidden={barHidden || undefined}
+          inert={barHidden || undefined}
+        >
+          <button
+            type="button"
+            onClick={() => {
+              useBuzzStore.getState().setSearch({ scope });
+              navigate(routes.buzzSearch());
+            }}
+            className="press flex h-10 w-full items-center gap-2 rounded-full bg-surface-2 px-4 text-left type-body text-ink-3"
+          >
+            <Search size={18} strokeWidth={1.75} aria-hidden className="shrink-0" />
+            <span className="truncate">Search {scope === 'campus' ? me.university.shortName : 'Global'} buzz</span>
+          </button>
+          <div className="flex items-center justify-between gap-2">
+            <SegmentedControl<BuzzSort> aria-label="Sort" size="sm" value={sort} onChange={setSort} options={SORTS} />
+            <CampusScopeToggle value={scope} onChange={onScope} size="sm" />
+          </div>
         </div>
         {sort === 'top' ? (
           <div className="px-4 pb-2">

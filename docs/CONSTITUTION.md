@@ -15,6 +15,8 @@ Pages (bottom navigation, in this order):
      to other users, but **monitored by the developers under community guidelines** (no harassment,
      bullying, threats, drugs, etc.).
    - **Orbit** — our name for the "for you"/following page. **Only people/orgs you follow appear here.**
+     *Amended by the owner (Oct 2026, DECISIONS D8):* plus popular / official posts from **your own campus** — people
+     you follow from other campuses still appear; non-followed accounts from other campuses never do.
 2. **Discover (search)** — search people/orgs; suggestions of people you may know and people who posted with
    their *actual public profile* (never the anonymous one). There must be a hard **segregation between the
    anonymous surface (Buzz) and real public profiles**.
@@ -32,7 +34,8 @@ Plus: "add other additional things that will make this app very useful", "make t
 
 - App working title: **UniVerse** (wordmark: `uni` regular + `verse` bold). Exposed as a single constant
   (`APP_NAME`) so it can be renamed in one place.
-- Home tabs: **Reels · Buzz · Orbit**. "Orbit" = the people and orgs in your orbit (following-only feed).
+- Home tabs: **Reels · Buzz · Orbit**. "Orbit" = the people and orgs in your orbit (following feed + your campus's
+  popular posts, D8).
 - Brand world: deep-space dark UI, aurora gradients, orbit rings. Premium, calm, fast. Not childish.
 
 ## 2. Stack (locked — do not substitute)
@@ -142,7 +145,7 @@ Rules:
 | `auth` | Welcome + onboarding UI polish (email → code → profile → guidelines → follow suggestions). Server auth is foundation's. |
 | `reels` | Reels pane (vertical snap feed), upload (≤60s enforced), likes, comments, share, `UserReelsGrid`, `FollowingReelsRail`. |
 | `buzz` | Anonymous feed: hot/new/top, campus/global, threads, votes, polls, guidelines gate, report, auto-hide on low score. |
-| `orbit` | Public posts (text/photos/polls), following-only feed, post detail, likes/comments, `UserPostsList`. |
+| `orbit` | Public posts (text/photos/polls), following feed + campus highlights (D8), post detail, likes/comments, `UserPostsList`. |
 | `discover` | Search people/orgs, suggestions (people you may know, active public creators, popular orgs), profile pages, follow lists, edit profile. |
 | `messages` | DMs + group chats, realtime (ws), typing, read receipts, image attachments, context cards (listing/roommate), requests from non-followers. |
 | `roommates` | My roommate profile/listing, lifestyle questionnaire, filters, compatibility %, save, message. |

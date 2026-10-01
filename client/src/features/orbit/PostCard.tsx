@@ -2,15 +2,17 @@
  * PostCard (design §7.2): NOT boxed — a full-width block under a `line-subtle` divider. Header (avatar, name, @handle ·
  * time, campus chip for other campuses, overflow), text, photo mosaic, poll, action row (like · comment · share; no
  * Save — SPEC §2.3). Optimistic like, double-tap photo like, Report + Block via `OverflowMenu`, delete for own posts.
+ * A campus highlight (DECISIONS D8: the author isn't followed) says why it is there ("Popular at …" / "Campus update")
+ * and offers a Follow button; following refreshes the feed and the label goes away.
  */
 import { memo, useCallback, useState, type FC, type KeyboardEvent, type MouseEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useMutation } from '@tanstack/react-query';
-import { Ellipsis, Heart, MessageCircle, Share, Trash2 } from 'lucide-react';
+import { Ellipsis, Heart, Megaphone, MessageCircle, Share, Trash2, TrendingUp } from 'lucide-react';
 import type { UserSummary } from '@shared/core';
 import type { Post } from '@shared/orbit';
 import { CampusBadge, Dialog, IconButton, Skeleton, SkeletonText, VerifiedBadge } from '@/ui';
-import { OverflowMenu, TimeAgo, UserAvatar, UserListSheet } from '@/components';
+import { FollowButton, OverflowMenu, TimeAgo, UserAvatar, UserListSheet } from '@/components';
 import { cn } from '@/lib/cn';
 import { errorMessage } from '@/lib/api';
 import { formatCount } from '@/lib/format';
@@ -95,6 +97,18 @@ export const PostCard: FC<PostCardProps> = memo(function PostCard({ post, varian
       aria-label={detail ? undefined : `Post by ${author.displayName}`}
       data-post-id={post.id}
     >
+      {/* why a post from someone you don't follow is here (feed only) */}
+      {post.highlight && !detail && !isSelf ? (
+        <p className="-mb-1 flex items-center gap-1.5 type-caption text-ink-3">
+          {post.highlight === 'popular' ? (
+            <TrendingUp size={14} strokeWidth={2} aria-hidden className="shrink-0 text-accent-ink" />
+          ) : (
+            <Megaphone size={14} strokeWidth={2} aria-hidden className="shrink-0 text-accent-ink" />
+          )}
+          <span className="truncate">{post.highlight === 'popular' ? `Popular at ${me.university.shortName}` : `Campus update · ${me.university.shortName}`}</span>
+        </p>
+      ) : null}
+
       {/* header */}
       <header className="flex items-center gap-3">
         <UserAvatar user={author} size="md" />
@@ -116,6 +130,11 @@ export const PostCard: FC<PostCardProps> = memo(function PostCard({ post, varian
           </span>
         </div>
         {isSelf ? <ContentStatusChip status={post.status} /> : null}
+        {post.highlight && !detail && !isSelf ? (
+          <span onClick={stop} className="shrink-0">
+            <FollowButton userId={author.id} initialFollowing={false} size="sm" />
+          </span>
+        ) : null}
         <span onClick={stop}>
           <IconButton icon={Ellipsis} aria-label="More" variant="ghost" size="sm" onClick={() => setMenuOpen(true)} />
         </span>

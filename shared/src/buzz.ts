@@ -22,6 +22,22 @@ export const BUZZ_TOP_WINDOWS: readonly BuzzTopWindow[] = ['day', 'week', 'all']
 export const BUZZ_POLL_DURATIONS = [1, 3, 7] as const;
 export type BuzzPollDuration = (typeof BUZZ_POLL_DURATIONS)[number];
 
+/**
+ * A photo or video on a root buzz. `url` is a random `/uploads/…` name (photos are rebuilt without EXIF on upload,
+ * videos have their metadata boxes scrubbed when attached) — nothing in it points at the author.
+ */
+export interface BuzzMedia {
+  type: 'image' | 'video';
+  url: string;
+  width: number | null;
+  height: number | null;
+  /** Videos only. */
+  durationMs: number | null;
+}
+
+/** Where a root buzz lives. Campus and Global are separate feeds: a buzz shows in exactly one of them. */
+export type BuzzScope = 'campus' | 'global';
+
 export interface BuzzPollOption {
   id: Id;
   text: string;
@@ -65,10 +81,16 @@ interface BuzzBase {
 
 export interface Buzz extends BuzzBase {
   kind: 'buzz';
+  /** Optional headline; '' when none (or when the item is a placeholder). */
+  title: string;
+  /** [] when none (or when the item is a placeholder). */
+  media: BuzzMedia[];
+  /** The feed this buzz was posted to. */
+  scope: BuzzScope;
   poll: BuzzPoll | null;
   replyCount: number;
   locked: boolean;
-  /** Only in global scope; null on campus. */
+  /** Global buzzes only (and only for campuses large enough to be named); null on campus. */
   campusShortName: string | null;
   promptId: Id | null;
 }
@@ -95,7 +117,15 @@ export interface BuzzFeedMeta {
 }
 
 export interface CreateBuzzRequest {
+  /** Body. May be empty when a title is given. */
   text: string;
+  title?: string;
+  /** Default 'campus'. */
+  scope?: BuzzScope;
+  /** Own `/uploads/…` image urls (≤ LIMITS.buzzImages). Not together with `video`. */
+  images?: string[];
+  /** One own `/uploads/…` video url. */
+  video?: string;
   poll?: { options: string[]; durationDays: BuzzPollDuration };
   promptId?: Id;
 }

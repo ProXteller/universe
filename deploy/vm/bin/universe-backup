@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# universe-backup — a consistent copy of the database (safe while the app is running), kept for 14 days.
+# universe-backup.timer runs it every night; `universe-config backup` runs it now.
+set -Eeuo pipefail
+STATE=${UNIVERSE_STATE:-/var/lib/universe}
+DB=${UNIVERSE_DB:-$STATE/universe.db}
+DEST=$STATE/backups
+KEEP_DAYS=14
+
+if [[ ! -f $DB ]]; then
+  echo "no database yet; nothing to back up"
+  exit 0
+fi
+mkdir -p "$DEST"
+chmod 700 "$DEST"
+out=$DEST/universe-$(date -u +%Y%m%d-%H%M%S).db
+sqlite3 "$DB" ".timeout 10000" ".backup '$out'"
+gzip -f "$out"
+find "$DEST" -name 'universe-*.db.gz' -mtime +"$KEEP_DAYS" -delete
+echo "backed up to $out.gz ($(du -h "$out.gz" | cut -f1))"

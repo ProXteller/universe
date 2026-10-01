@@ -18,6 +18,8 @@ export const buzzKeys = {
   all: ['buzz'] as const,
   feed: (sort: BuzzSort, window: BuzzTopWindow, scope: FeedScope) => ['buzz', 'feed', sort, sort === 'top' ? window : 'day', scope] as const,
   feeds: ['buzz', 'feed'] as const,
+  /** Under `feeds` on purpose: votes / deletes / new buzzes patch and refresh search results like any feed. */
+  search: (q: string, scope: FeedScope, sort: BuzzSort) => ['buzz', 'feed', 'search', q, scope, sort] as const,
   meta: (scope: FeedScope) => ['buzz', 'meta', scope] as const,
   thread: (id: Id) => ['buzz', 'thread', id] as const,
   replies: (id: Id) => ['buzz', 'replies', id] as const,
@@ -41,6 +43,20 @@ export function useBuzzFeed(sort: BuzzSort, window: BuzzTopWindow, scope: FeedSc
     path: '/buzz/feed',
     query: { sort, window: sort === 'top' ? window : undefined, scope },
     enabled: accepted && enabled,
+  });
+  useGateErrorGuard(list.error);
+  return list;
+}
+
+/** Search: the feed endpoint with `q` (every word must appear in the title or the body). Idle until `q` has 2+ chars. */
+export function useBuzzSearch(q: string, scope: FeedScope, sort: BuzzSort) {
+  const { accepted } = useBuzzGate();
+  const query = q.trim();
+  const list = useInfiniteList<Buzz>({
+    queryKey: [...buzzKeys.search(query.toLowerCase(), scope, sort)],
+    path: '/buzz/feed',
+    query: { q: query, scope, sort, window: sort === 'top' ? 'all' : undefined },
+    enabled: accepted && query.length >= 2,
   });
   useGateErrorGuard(list.error);
   return list;

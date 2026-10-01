@@ -22,3 +22,10 @@ chain for product and technical decisions is `docs/CONSTITUTION.md` > `docs/DECI
 - Client code uses UI-kit tokens only: no raw hex, no `position: fixed`, no `100vh`, no spinners, and `formatPrice` instead of a literal "$".
 - Feature code lives in `client/src/features/<slice>/`, `server/src/routes/<slice>.ts` and `server/src/services/<slice>/`.
   Shared building blocks live in `client/src/{ui,components,lib,app}` and `server/src/lib`.
+
+## Production
+- Hosting: `deploy/README.md` (Azure for Students VM). The server redeploys itself from GitHub `main` every 2 minutes,
+  with rollback if a build or start fails. Pushing to `main` = shipping.
+- Live data is in `/var/lib/universe` on the server (DB + uploads). Schema changes must be additive (new tables /
+  columns via an `onDbReady` upgrade, as in `server/src/services/buzz/schema.ts`); never drop or rename.
+- Server tooling lives in `deploy/vm/`; after editing it run `node deploy/make-cloud-init.mjs`.

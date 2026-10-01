@@ -1,6 +1,7 @@
 /**
  * orbit slice tests (SPEC §5.4 + §5 common minimum), isolation mode.
- * Feed = follows + self, strictly chronological; unfollow removes; block both ways (posts, comments, likers);
+ * Feed = follows + self (+ campus highlights, see orbit-highlights.test.ts), strictly chronological; unfollow removes;
+ * block both ways (posts, comments, likers);
  * new-count; poll single vote; held post invisible to followers; images must be own uploads; auth 401; validation 400;
  * moderation block 422 + author-notice hygiene; muted 403 on every create route; likes; comments + replies + delete
  * cascade; delete post → public_activity gone; adapters + card resolver; seed invariants at lite.
@@ -74,7 +75,7 @@ describe('auth + validation', () => {
 });
 
 describe('feed', () => {
-  it('contains only follows + self, strictly reverse-chronological, with lastVisitAt + followingCount', async () => {
+  it('contains follows + self (a stranger\'s ordinary post stays out), strictly reverse-chronological, with lastVisitAt + followingCount', async () => {
     const a = ctx.createUser({ handle: 'orb_a' });
     const b = ctx.createUser({ handle: 'orb_b' });
     const stranger = ctx.createUser({ handle: 'orb_stranger' });

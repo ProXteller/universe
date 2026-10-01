@@ -1,0 +1,23 @@
+[Unit]
+Description=UniVerse (API + realtime)
+After=network-online.target
+Wants=network-online.target
+# nothing to run until the first deploy has created a release
+ConditionPathExists=/opt/universe/current/server/src/index.ts
+
+[Service]
+User=universe
+Group=universe
+EnvironmentFile=/etc/universe/universe.env
+WorkingDirectory=/opt/universe/current/server
+ExecStart=/opt/universe/current/server/node_modules/.bin/tsx src/index.ts
+Restart=always
+RestartSec=3
+TimeoutStopSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

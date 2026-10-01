@@ -23,6 +23,12 @@ export const MAX_PAGE_LIMIT = 50;
 /** Text caps enforced by zod BEFORE moderation (server) and by counters (client). */
 export const LIMITS = {
   buzzText: 500,
+  /** Optional headline on a root buzz. */
+  buzzTitle: 100,
+  /** Photos on one buzz (or one video instead). */
+  buzzImages: 4,
+  /** Buzz search query length. */
+  buzzSearch: 80,
   buzzReplyText: 500,
   pollOptionText: 60,
   pollMinOptions: 2,

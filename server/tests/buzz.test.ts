@@ -117,7 +117,8 @@ describe('firewall', () => {
           const res = await other.get('/api/buzz/feed').query({ sort, scope, window, limit: 50 });
           expect(res.status, `${sort}/${scope}/${window}`).toBe(200);
           firewall(res.body);
-          expect(res.body.items.some((b: Buzz) => b.id === root.id), `${sort}/${scope}`).toBe(true);
+          // campus and global are separate feeds: a campus buzz is in campus only
+          expect(res.body.items.some((b: Buzz) => b.id === root.id), `${sort}/${scope}`).toBe(scope === 'campus');
           expect(res.body.items.every((b: Buzz) => b.createdAt % MIN === 0)).toBe(true);
         }
       }
@@ -219,7 +220,7 @@ describe('firewall', () => {
     const author = ctx.as('bencarter');
     const viewerUser = ctx.createUser();
     const viewer = ctx.as(viewerUser.id);
-    const root = await post(author, uniq('block oracle thread'));
+    const root = await post(author, uniq('block oracle thread'), { scope: 'global' });
     await reply(author, root.id, uniq('author reply'));
     const snap = async (): Promise<string[]> => {
       const out: string[] = [];
@@ -818,23 +819,28 @@ describe('seed', () => {
     const hiddenIds = (ctx.db.prepare("SELECT id FROM buzz_posts WHERE status = 'hidden'").all() as { id: string }[]).map((r) => r.id);
     const collapsedId = q<{ id: string }>("SELECT id FROM buzz_posts WHERE status = 'active' AND eligible_score <= -5 AND eligible_votes >= 8").id;
     const stranger = reader().api;
-    for (const sort of ['hot', 'new', 'top']) {
-      const ids = (await stranger.get('/api/buzz/feed').query({ sort, scope: 'global', window: 'all', limit: 50 })).body.items.map((b: Buzz) => b.id);
+    // `stranger` may sit on another campus: Maya (UT) sees the hero campus feed, the stranger sees Global
+    for (const who of [stranger, maya]) for (const scope of ['campus', 'global']) for (const sort of ['hot', 'new', 'top']) {
+      const ids = (await who.get('/api/buzz/feed').query({ sort, scope, window: 'all', limit: 50 })).body.items.map((b: Buzz) => b.id);
       expect(ids.some((id: string) => hiddenIds.includes(id))).toBe(false);
       if (sort !== 'new') expect(ids).not.toContain(collapsedId);
     }
-    // pagination walks the whole global feed without repeats
+    // pagination walks Maya's campus feed and the global feed without repeats — and no buzz is in both
     const seen = new Set<string>();
-    let cursor: string | null = null;
-    for (let page = 0; page < 20; page++) {
-      const res = await stranger.get('/api/buzz/feed').query({ sort: 'hot', scope: 'global', limit: 7, ...(cursor ? { cursor } : {}) });
-      for (const b of res.body.items as Buzz[]) {
-        expect(seen.has(b.id)).toBe(false);
-        seen.add(b.id);
+    for (const scope of ['campus', 'global']) {
+      let cursor: string | null = null;
+      for (let page = 0; page < 20; page++) {
+        const res = await maya.get('/api/buzz/feed').query({ sort: 'hot', scope, limit: 7, ...(cursor ? { cursor } : {}) });
+        for (const b of res.body.items as Buzz[]) {
+          expect(seen.has(b.id), `${b.id} served twice (${scope})`).toBe(false);
+          expect(b.scope).toBe(scope);
+          seen.add(b.id);
+        }
+        cursor = res.body.nextCursor;
+        if (!cursor) break;
       }
-      cursor = res.body.nextCursor;
-      if (!cursor) break;
     }
     expect(seen.size).toBeGreaterThanOrEqual(25);
+    expect(q<{ n: number }>("SELECT COUNT(*) AS n FROM buzz_posts WHERE root_id IS NULL AND scope = 'global'").n).toBeGreaterThan(0);
   });
 });

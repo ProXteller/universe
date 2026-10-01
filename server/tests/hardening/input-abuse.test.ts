@@ -582,6 +582,8 @@ describe('D. SQL construction and zod handling', () => {
       // literal-only locals (each checked by hand: built from string literals / constant enums, never from input)
       // ANON_SQL_LIST (lib/moderation/staff.ts, added by the firewall fix): ANON_ENTITY_TYPES.map(() => '?').join(',') — placeholders only
       /^(sortExpr|notBlockedByMe|anonList|ANON_LIST|ANON_SQL_LIST|emailClause|hostSql|campusOnly|stateSql|DAY)$/,
+      // SCORE_SQL (services/orbit/posts.ts, Orbit campus highlights D8): a literal engagement formula over `p.*` columns
+      /^SCORE_SQL$/,
       /^ACTIVATION_EVENTS\.map\(\(\) => '\?'\)\.join\(','\)$/, /^sqlAuthorVisible\('[\w.]+'\)$/,
     ];
     const offenders: string[] = [];

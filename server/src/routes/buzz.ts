@@ -7,14 +7,16 @@
  * only via `notifyAnonymous`; ws only `{ type:'buzz.thread_updated', threadId }` to thread participants; analytics
  * only the `buzz_*` (anonymous) names; NEVER `markPublicActivity`.
  */
+import path from 'node:path';
 import { Router } from 'express';
 import { z } from 'zod';
 import type { AuthorNotice, FeedScope, Id, ModerationResult, WithModeration } from '@shared/core';
 import { LIMITS } from '@shared/core';
 import type {
-  Buzz, BuzzFeedMeta, BuzzKarma, BuzzPoll, BuzzReply, BuzzThread, BuzzVoteState, CreateBuzzReplyRequest, CreateBuzzRequest, MyBuzzItem,
+  Buzz, BuzzFeedMeta, BuzzMedia, BuzzKarma, BuzzPoll, BuzzReply, BuzzThread, BuzzVoteState, CreateBuzzReplyRequest, CreateBuzzRequest, MyBuzzItem,
 } from '@shared/buzz';
 import { BUZZ_POLL_DURATIONS, BUZZ_SORTS, BUZZ_TOP_WINDOWS } from '@shared/buzz';
+import { config } from '../config';
 import { prep, tx } from '../db/index';
 import { requireBuzzGate } from '../middleware/auth';
 import { trackEvent } from '../lib/analytics';
@@ -24,11 +26,12 @@ import { log } from '../lib/logger';
 import { blockedTarget, commitModeration, modCtx, moderateWrite, toAuthorNotice } from '../lib/moderation/index';
 import { notifyAnonymous, removeNotificationsFor } from '../lib/notify';
 import { assertAccountAge, enforceRateLimit, requireCanPost } from '../lib/rateLimit';
+import { assertOwnUpload, scrubMp4Metadata } from '../lib/uploads';
 import { publishToUsers } from '../lib/realtime';
 import type { AuthedUser } from '../lib/users';
 import { registerBuzz } from '../services/buzz/registry';
 import {
-  pageReplies, serializeBuzz, serializeFeed, serializeMine, serializeReply, serializeThread, snippet, threadContext, visibleReplies,
+  headline, pageReplies, serializeBuzz, serializeFeed, serializeMine, serializeReply, serializeThread, snippet, threadContext, visibleReplies,
 } from '../services/buzz/serialize';
 import {
   campusUserCount, getPost, getRoot, insertPoll, insertPost, isThreadHidden, pollsFor, promptById, queryFeed, recountReplies,
@@ -92,14 +95,23 @@ const feedQuery = pageQuery.extend({
   sort: z.enum(BUZZ_SORTS as [string, ...string[]]).default('hot'),
   window: z.enum(BUZZ_TOP_WINDOWS as [string, ...string[]]).default('day'),
   scope: z.enum(['campus', 'global']).default('campus'),
+  /** Search: every word must appear in the title or the body. */
+  q: z.string().trim().max(LIMITS.buzzSearch).optional(),
 });
 
 const scopeQuery = z.object({ scope: z.enum(['campus', 'global']).default('campus') });
 
 const idParam = z.string().min(1).max(64);
 
-const createBuzzSchema = z.object({
-  text: z.string().trim().min(1, 'Say something first.').max(LIMITS.buzzText),
+const uploadRef = z.string().min(1).max(200);
+
+const createBuzzSchema = z
+  .object({
+  text: z.string().trim().max(LIMITS.buzzText).default(''),
+  title: z.string().trim().max(LIMITS.buzzTitle).optional(),
+  scope: z.enum(['campus', 'global']).default('campus'),
+  images: z.array(uploadRef).max(LIMITS.buzzImages, `You can attach up to ${LIMITS.buzzImages} photos.`).optional(),
+  video: uploadRef.optional(),
   poll: z
     .object({
       options: z
@@ -111,7 +123,35 @@ const createBuzzSchema = z.object({
     })
     .optional(),
   promptId: z.string().min(1).max(64).optional(),
-});
+})
+  .refine((b) => b.text.length > 0 || (b.title ?? '').length > 0, { message: 'Say something first.', path: ['text'] })
+  .refine((b) => !(b.video && b.images && b.images.length > 0), { message: 'Add photos or one video, not both.', path: ['video'] });
+
+/**
+ * The caller's own uploads → the stored media list. Each file is claimed for Buzz (`purpose = 'buzz'`, so it can never
+ * be reused on a public surface) and videos are scrubbed of their location / device / time metadata first.
+ */
+function claimBuzzMedia(u: AuthedUser, body: { images?: string[]; video?: string }): BuzzMedia[] {
+  if (body.video) {
+    const row = assertOwnUpload(u, body.video, 'video', { allowBuzz: true });
+    if (row.purpose !== null && row.purpose !== 'buzz') throw ApiError.notFound('Upload not found');
+    if (row.mime === 'video/mp4' && !scrubMp4Metadata(path.join(config.uploadsDir, path.basename(row.url)))) {
+      throw new ApiError(415, 'unsupported_media', "We couldn't process that video. Try a different file.");
+    }
+    if (row.mime !== 'video/mp4') throw new ApiError(415, 'unsupported_media', 'Buzz videos must be MP4 or MOV.');
+    return [{ type: 'video', url: row.url, width: row.width, height: row.height, durationMs: row.duration_ms }];
+  }
+  const seen = new Set<string>();
+  const out: BuzzMedia[] = [];
+  for (const ref of body.images ?? []) {
+    const row = assertOwnUpload(u, ref, 'image', { allowBuzz: true });
+    if (row.purpose !== null && row.purpose !== 'buzz') throw ApiError.notFound('Upload not found');
+    if (seen.has(row.id)) continue;
+    seen.add(row.id);
+    out.push({ type: 'image', url: row.url, width: row.width, height: row.height, durationMs: null });
+  }
+  return out;
+}
 
 const createReplySchema = z.object({
   text: z.string().trim().min(1, 'Say something first.').max(LIMITS.buzzReplyText),
@@ -132,10 +172,12 @@ router.get(
     const { query } = typed<unknown, z.infer<typeof feedQuery>>(req);
     const page = queryFeed(u, {
       sort: query.sort as 'hot' | 'new' | 'top', window: query.window as 'day' | 'week' | 'all', scope: query.scope as FeedScope,
-      cursor: query.cursor, limit: query.limit,
+      q: query.q, cursor: query.cursor, limit: query.limit,
     });
     const items = serializeFeed(u.id, query.scope as FeedScope, page.rows);
-    if (!query.cursor) trackEvent('buzz_feed_view', { userId: u.id, universityId: u.universityId }, { sort: query.sort, scope: query.scope });
+    if (!query.cursor) {
+      trackEvent('buzz_feed_view', { userId: u.id, universityId: u.universityId }, { sort: query.sort, scope: query.scope, search: Boolean(query.q) });
+    }
     res.json({ items, nextCursor: page.nextCursor });
   }),
 );
@@ -168,7 +210,12 @@ router.post(
     if (body.poll) assertAccountAge(u, POLL_MIN_ACCOUNT_AGE_MS, 'Polls unlock 24 hours after you join.');
     if (body.promptId && !promptById(body.promptId)) throw new ApiError(400, 'validation_failed', 'That prompt has expired.');
 
-    const textMod = moderateWrite([{ text: body.text }], modCtx(u, 'buzz'), blockedTarget(u, 'buzz'));
+    const textMod = moderateWrite(
+      [...(body.title ? [{ text: body.title, field: 'title' as const }] : []), { text: body.text }],
+      modCtx(u, 'buzz'),
+      blockedTarget(u, 'buzz'),
+    );
+    const media = claimBuzzMedia(u, body);
     const pollMod = body.poll
       ? moderateWrite(body.poll.options.map((text) => ({ text, field: 'option' as const })), modCtx(u, 'buzz_poll'), blockedTarget(u, 'buzz'))
       : null;
@@ -177,15 +224,23 @@ router.post(
     const row = tx(() => {
       const created = insertPost({
         rootId: null, parentId: null, depth: 0, authorId: u.id, universityId: u.universityId, text: body.text,
+        title: body.title ?? '', media, scope: body.scope ?? 'campus',
         promptId: body.promptId ?? null, status, supportLink: Boolean(textMod.support ?? pollMod?.support),
       });
+      if (media.length > 0) {
+        const mark = prep("UPDATE uploads SET purpose = 'buzz' WHERE user_id = ? AND url = ?");
+        for (const m of media) mark.run(u.id, m.url);
+      }
       // minute-floored: an exact `closesAt` minus the duration would give away the exact creation instant (L2)
       if (body.poll) insertPoll(created.id, Math.floor(now() / MIN) * MIN + body.poll.durationDays * DAY, body.poll.options);
       return created;
     });
     commitModeration(textMod, { ...blockedTarget(u, 'buzz'), entityId: row.id });
     if (pollMod) commitModeration(pollMod, { ...blockedTarget(u, 'buzz'), entityId: row.id });
-    trackEvent('buzz_post', { userId: u.id, universityId: u.universityId }, { hasPoll: Boolean(body.poll), fromPrompt: Boolean(body.promptId) });
+    trackEvent('buzz_post', { userId: u.id, universityId: u.universityId }, {
+      hasPoll: Boolean(body.poll), fromPrompt: Boolean(body.promptId), scope: body.scope ?? 'campus', hasTitle: Boolean(body.title),
+      photos: media.filter((m) => m.type === 'image').length, hasVideo: media.some((m) => m.type === 'video'),
+    });
 
     const out: WithModeration<Buzz> = { ...serializeBuzz(getPost(row.id)!, threadContext(row, u.id, [])), moderation: mergedNotice(textMod, pollMod) };
     res.status(201).json(out);
@@ -345,7 +400,7 @@ router.post(
       for (const to of recipients) {
         const own = to === root.author_id ? root : parent; // snippet = the recipient's OWN buzz only
         try {
-          notifyAnonymous({ userId: to, type: 'buzz.reply', threadId: root.id, href: threadHref(root.id), data: { snippet: snippet(own.text, 80) } });
+          notifyAnonymous({ userId: to, type: 'buzz.reply', threadId: root.id, href: threadHref(root.id), data: { snippet: snippet(headline(own), 80) } });
         } catch (err) {
           log.error('buzz.reply notice failed', err);
         }

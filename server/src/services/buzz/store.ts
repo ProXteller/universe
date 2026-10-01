@@ -7,7 +7,7 @@ import { db, inClause, newId, prep } from '../../db/index';
 import { DAY, now } from '../../lib/clock';
 import { decodeCursor, encodeCursor, keysetWhere, type CursorValue } from '../../lib/http';
 import { sqlNotReported } from '../../lib/graph';
-import type { BuzzSort, BuzzTopWindow } from '@shared/buzz';
+import type { BuzzMedia, BuzzScope, BuzzSort, BuzzTopWindow } from '@shared/buzz';
 
 export interface BuzzRow {
   id: Id;
@@ -17,6 +17,12 @@ export interface BuzzRow {
   author_id: Id;
   university_id: Id;
   text: string;
+  /** Root only; '' when none. */
+  title: string;
+  /** Root only; JSON `BuzzMedia[]` (read through `parseMedia`). */
+  media: string;
+  /** Root only; replies keep the column default and inherit their root's feed. */
+  scope: BuzzScope;
   prompt_id: Id | null;
   status: ContentStatus;
   auto_hide_immune: number;
@@ -53,6 +59,34 @@ export interface PromptRow {
 }
 
 /* ───────────────────────────── reads ───────────────────────────── */
+
+/** The stored media list; anything malformed reads as no media. */
+export function parseMedia(raw: string | null | undefined): BuzzMedia[] {
+  if (!raw) return [];
+  try {
+    const v = JSON.parse(raw) as unknown;
+    if (!Array.isArray(v)) return [];
+    return v
+      .filter((m): m is BuzzMedia => !!m && typeof m === 'object' && (m.type === 'image' || m.type === 'video') && typeof m.url === 'string')
+      .map((m) => ({ type: m.type, url: m.url, width: m.width ?? null, height: m.height ?? null, durationMs: m.type === 'video' ? (m.durationMs ?? null) : null }));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Search terms from a free-text query: lower-cased words of ≥ 2 characters (max 6). Every term must appear in the title
+ * or the body. LIKE wildcards are escaped, so `%` / `_` match literally.
+ */
+export function searchTerms(q: string | undefined): string[] {
+  if (!q) return [];
+  const words = q.toLowerCase().split(/[^\p{L}\p{N}'&+#.-]+/u).map((w) => w.replace(/^[.'-]+|[.'-]+$/g, '')).filter((w) => w.length >= 2);
+  return [...new Set(words)].slice(0, 6);
+}
+
+function likeEscape(term: string): string {
+  return `%${term.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+}
 
 export function getPost(id: Id): BuzzRow | null {
   return (prep('SELECT * FROM buzz_posts WHERE id = ?').get(id) as BuzzRow | undefined) ?? null;
@@ -181,6 +215,8 @@ export interface FeedQuery {
   sort: BuzzSort;
   window: BuzzTopWindow;
   scope: FeedScope;
+  /** Free-text search over title + body (see `searchTerms`). */
+  q?: string;
   cursor?: string;
   limit: number;
 }
@@ -198,6 +234,8 @@ const MS_PER_MIN = 60_000;
  * computed with, so every later page ranks against the same instant (no drift, no repeats).
  */
 export function queryFeed(viewer: { id: Id; universityId: Id }, q: FeedQuery): FeedPage {
+  // a search with nothing searchable in it (one letter, only symbols) matches nothing — never "everything"
+  if (q.q !== undefined && q.q.trim() !== '' && searchTerms(q.q).length === 0) return { rows: [], nextCursor: null };
   const cur = decodeCursor(q.cursor);
   const at = now();
   const where: string[] = ['p.root_id IS NULL', "p.status != 'deleted'"];
@@ -206,9 +244,18 @@ export function queryFeed(viewer: { id: Id; universityId: Id }, q: FeedQuery): F
   // status: active for everyone; the author also sees their own held / hidden / removed rows (SPEC §3.1)
   where.push("(p.status = 'active' OR p.author_id = ?)");
   params.push(viewer.id);
+  // Campus and Global are SEPARATE feeds: a root lives in exactly one of them. Campus = your university's campus buzzes;
+  // Global = buzzes posted to Global from every campus (including yours).
   if (q.scope === 'campus') {
-    where.push('p.university_id = ?');
+    where.push("p.scope = 'campus' AND p.university_id = ?");
     params.push(viewer.universityId);
+  } else {
+    where.push("p.scope = 'global'");
+  }
+  for (const term of searchTerms(q.q)) {
+    where.push("(lower(p.title) LIKE ? ESCAPE '\\' OR lower(p.text) LIKE ? ESCAPE '\\')");
+    const like = likeEscape(term);
+    params.push(like, like);
   }
   // viewer's own hides + reports. NO block filter, NO author-visibility filter (safety L14 / L16).
   where.push('NOT EXISTS (SELECT 1 FROM buzz_hidden_threads _ht WHERE _ht.user_id = ? AND _ht.thread_id = p.id)');
@@ -287,6 +334,9 @@ export interface InsertPostInput {
   authorId: Id;
   universityId: Id;
   text: string;
+  title?: string;
+  media?: BuzzMedia[];
+  scope?: BuzzScope;
   promptId?: Id | null;
   status: ContentStatus;
   supportLink?: boolean;
@@ -296,11 +346,12 @@ export interface InsertPostInput {
 export function insertPost(input: InsertPostInput): BuzzRow {
   const id = input.id ?? newId();
   prep(
-    `INSERT INTO buzz_posts (id, root_id, parent_id, depth, author_id, university_id, text, prompt_id, status, support_link, created_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+    `INSERT INTO buzz_posts (id, root_id, parent_id, depth, author_id, university_id, text, title, media, scope, prompt_id, status, support_link, created_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
   ).run(
-    id, input.rootId, input.parentId, input.depth, input.authorId, input.universityId, input.text, input.promptId ?? null, input.status,
-    input.supportLink ? 1 : 0, input.createdAt ?? now(),
+    id, input.rootId, input.parentId, input.depth, input.authorId, input.universityId, input.text, input.title ?? '',
+    JSON.stringify(input.media ?? []), input.scope ?? 'campus', input.promptId ?? null, input.status, input.supportLink ? 1 : 0,
+    input.createdAt ?? now(),
   );
   return getPost(id)!;
 }

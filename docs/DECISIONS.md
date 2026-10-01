@@ -60,3 +60,34 @@ acceptance: "works with all 12 files missing") and MUST look intentional; the or
 8 GB RAM, up to 6 agents at once. Never leave a process running when you finish (kill any server you started; use a
 unique `PORT` ≥ 4100 and a temp `DB_PATH` if you must boot one). Prefer vitest + supertest over booting servers.
 `vite build` is for gate agents only.
+
+## D7 — Buzz upgrade (owner request, Oct 2026)
+
+Supersedes the SPEC §2 Buzz row where they differ ("No images" is lifted):
+- **Campus and Global are separate feeds.** Every root buzz has `scope` (`campus` | `global`), chosen in the composer
+  (defaults to the feed it was opened from). Campus = your university's campus buzzes only; Global = buzzes posted to
+  Global from every campus. A buzz never appears in both.
+- **Search.** `GET /api/buzz/feed?q=` — every word must appear in the title or body (case-insensitive, LIKE wildcards
+  escaped), within the chosen scope, same visibility rules as the feed. Client: `/buzz/search`.
+- **Titles and media.** Optional title (≤ 100, moderated as the `title` field), up to 4 photos OR one video (≤ 60 s,
+  MP4/MOV). Photos are rebuilt without EXIF on upload (existing rule); videos get their `udta` / `meta` / `uuid` boxes
+  renamed to `free` and blanked, and mvhd / tkhd / mdhd times zeroed, in place, when attached. Attached uploads are
+  marked `purpose = 'buzz'` and can never be reused on a public surface (`assertOwnUpload` refuses them).
+  Placeholders carry no title and no media. Share cards stay text-only.
+- **Filter bar** (search + sort + scope) hides while scrolling down and returns on scroll up.
+
+## D8 — Orbit campus highlights (owner request, Oct 2026)
+
+Supersedes "only people/orgs you follow" (Constitution §0 1, SPEC §5.4 "nothing injected"):
+- **Feed = follows ∪ self (any campus) ∪ campus highlights**, strictly `created_at DESC, id DESC` — highlights are
+  interleaved by time, never pinned, so paging and "New since your last visit" are unchanged.
+- **Campus highlight** = a post from the viewer's **own campus** by someone they don't follow, active, ≤ 7 days old,
+  that is **popular** (engagement `likes + 2·comments + ⌊poll votes / 2⌋` above the campus's lower-median post of the
+  week, floor 5; fewer than 10 posts in the week → floor only) or **official** (verified campus org, ≤ 3 days old).
+  Never from another campus, never a minor's post, never an account < 72 h old or still restricted after a
+  suspension; blocks, reports, held posts and suspended authors apply as everywhere.
+- The feed item carries `highlight: 'popular' | 'official'`; the card says "Popular at {campus}" / "Campus update" and
+  offers Follow. Following the author turns it into an ordinary post.
+- The "New posts" pill (`/feed/new-count`) still counts followed authors only.
+- Seed: a deterministic "campus reach" pass gives the newest posts of two hero students Maya doesn't follow likes from
+  across the campus, so the demo shows highlights (no rng draw — later seeds unchanged).

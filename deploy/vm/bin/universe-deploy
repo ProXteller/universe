@@ -1,0 +1,220 @@
+#!/usr/bin/env bash
+# universe-deploy — keeps this server on the newest commit of the app's GitHub branch.
+#
+# universe-deploy.timer runs it every 2 minutes. When the branch has a new commit, it builds that commit into its own
+# release folder, points /opt/universe/current at it, restarts the app and waits for it to answer. A build that fails,
+# or an app that doesn't come up, is never left live: the previous release is put back and the broken commit is
+# skipped until a newer one arrives. The database and uploads live outside the releases (/var/lib/universe), so a
+# deploy never touches your data.
+#
+#   universe-deploy            deploy if there is something new
+#   universe-deploy --force    rebuild and redeploy the newest commit, even if it is live already or failed before
+set -Eeuo pipefail
+umask 022
+
+ROOT=${UNIVERSE_ROOT:-/opt/universe}
+STATE=${UNIVERSE_STATE:-/var/lib/universe}
+CONF=${UNIVERSE_CONF:-/etc/universe}
+APP_USER=${UNIVERSE_USER:-universe}
+SYSTEMCTL=${UNIVERSE_SYSTEMCTL:-systemctl}
+HEALTH_URL=${UNIVERSE_HEALTH_URL:-http://127.0.0.1:4000/api/health}
+BIN_DIR=${UNIVERSE_BIN_DIR:-/usr/local/bin}
+UNIT_DIR=${UNIVERSE_UNIT_DIR:-/etc/systemd/system}
+HEALTH_TRIES=${UNIVERSE_HEALTH_TRIES:-45}
+KEEP_RELEASES=3
+
+REPO=$ROOT/repo
+RELEASES=$ROOT/releases
+CURRENT=$ROOT/current
+
+log() { printf '[%s] %s\n' "$(date -u +%FT%TZ)" "$*"; }
+
+if [[ ! -f $CONF/deploy.conf ]]; then
+  log "missing $CONF/deploy.conf"
+  exit 1
+fi
+# shellcheck source=/dev/null
+source "$CONF/deploy.conf" # REPO_URL, BRANCH
+: "${REPO_URL:?REPO_URL is not set in $CONF/deploy.conf}"
+BRANCH=${BRANCH:-main}
+
+export GIT_SSH_COMMAND="ssh -i $CONF/deploy_key -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$CONF/known_hosts"
+export GIT_TERMINAL_PROMPT=0
+
+mkdir -p "$RELEASES" "$STATE"
+exec 9>"$STATE/deploy.lock"
+if ! flock -n 9; then
+  log "a deploy is already running"
+  exit 0
+fi
+
+FORCE=0
+[[ ${1:-} == --force ]] && FORCE=1
+
+# ───────────────────────────── fetch ─────────────────────────────
+
+if [[ ! -d $REPO/.git ]]; then
+  rm -rf "$REPO"
+  if ! git clone --quiet --no-checkout "$REPO_URL" "$REPO" 2>"$STATE/git-error.log"; then
+    rm -rf "$REPO"
+    log "can't reach $REPO_URL yet: add this server's deploy key on GitHub (run: universe-config deploy-key)"
+    exit 0
+  fi
+fi
+git -C "$REPO" remote set-url origin "$REPO_URL"
+if ! git -C "$REPO" fetch --quiet --prune origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH" 2>"$STATE/git-error.log"; then
+  log "fetch failed: $(tail -n 1 "$STATE/git-error.log")"
+  exit 0
+fi
+
+SHA=$(git -C "$REPO" rev-parse "refs/remotes/origin/$BRANCH")
+SHORT=${SHA:0:12}
+LIVE=$(cat "$STATE/live-sha" 2>/dev/null || true)
+FAILED=$(cat "$STATE/failed-sha" 2>/dev/null || true)
+if ((!FORCE)); then
+  [[ $SHA == "$LIVE" ]] && exit 0
+  # a broken commit is not rebuilt every 2 minutes: push a fix (or run universe-deploy --force)
+  [[ $SHA == "$FAILED" ]] && exit 0
+fi
+
+# ───────────────────────────── build ─────────────────────────────
+
+NEW=$RELEASES/$SHORT
+NODE_VERSION=$(node -v)
+log "deploying $SHORT: $(git -C "$REPO" log -1 --format=%s "$SHA" | cut -c1-80)"
+rm -rf "$NEW"
+mkdir -p "$NEW"
+git -C "$REPO" archive "$SHA" | tar -x -C "$NEW"
+chown -R "$APP_USER:$APP_USER" "$NEW"
+
+as_app() {
+  runuser -u "$APP_USER" -- env HOME="$STATE/home" npm_config_cache="$STATE/npm-cache" npm_config_update_notifier=false "$@"
+}
+
+# Reuses the live release's node_modules when the lockfile and Node version are unchanged (a deploy then takes
+# seconds); otherwise a clean `npm ci`.
+install_deps() {
+  local part=$1
+  if [[ -d $CURRENT/$part/node_modules && -f $CURRENT/.node-version ]] &&
+    [[ $(cat "$CURRENT/.node-version") == "$NODE_VERSION" ]] &&
+    cmp -s "$CURRENT/$part/package-lock.json" "$NEW/$part/package-lock.json"; then
+    cp -a "$CURRENT/$part/node_modules" "$NEW/$part/node_modules"
+  else
+    (cd "$NEW/$part" && as_app npm ci --include=dev --no-audit --no-fund)
+  fi
+}
+
+build() {
+  install_deps server || return 1
+  install_deps client || return 1
+  (cd "$NEW/client" && as_app ./node_modules/.bin/vite build) || return 1
+  [[ -f $NEW/client/dist/index.html ]] || return 1
+  # keep the previous release's own hashed files too (one generation), so a tab opened before this deploy can still
+  # lazy-load its pages
+  (cd "$NEW/client/dist/assets" && find . -maxdepth 1 -type f -printf '%f\n') >"$NEW/client/.own-assets"
+  if [[ -f $CURRENT/client/.own-assets ]]; then
+    local f
+    while IFS= read -r f; do
+      if [[ -n $f && ! -e $NEW/client/dist/assets/$f ]]; then
+        cp -a "$CURRENT/client/dist/assets/$f" "$NEW/client/dist/assets/$f" || true
+      fi
+    done <"$CURRENT/client/.own-assets"
+  fi
+  echo "$NODE_VERSION" >"$NEW/.node-version"
+}
+
+if ! build >"$STATE/last-build.log" 2>&1; then
+  echo "$SHA" >"$STATE/failed-sha"
+  rm -rf "$NEW"
+  log "build of $SHORT failed; still serving ${LIVE:0:12}. Details: $STATE/last-build.log"
+  exit 1
+fi
+
+# ───────────────────────────── switch + check ─────────────────────────────
+
+switch_to() {
+  ln -sfn "$1" "$CURRENT.next"
+  mv -Tf "$CURRENT.next" "$CURRENT"
+}
+
+healthy() {
+  local i
+  for ((i = 0; i < HEALTH_TRIES; i++)); do
+    if curl -fsS --max-time 3 "$HEALTH_URL" 2>/dev/null | grep -q '"ok":true'; then
+      return 0
+    fi
+    sleep 2
+  done
+  return 1
+}
+
+PREV=$(readlink -f "$CURRENT" 2>/dev/null || true)
+switch_to "$NEW"
+"$SYSTEMCTL" enable universe >/dev/null 2>&1 || true
+"$SYSTEMCTL" restart universe || true
+
+if ! healthy; then
+  journalctl -u universe -n 120 --no-pager >"$STATE/last-crash.log" 2>&1 || true
+  echo "$SHA" >"$STATE/failed-sha"
+  if [[ -n $PREV && -d $PREV && $PREV != "$NEW" ]]; then
+    switch_to "$PREV"
+    "$SYSTEMCTL" restart universe || true
+    log "$SHORT didn't start; put ${PREV##*/} back. Details: $STATE/last-crash.log"
+  else
+    log "$SHORT didn't start. Details: $STATE/last-crash.log"
+  fi
+  exit 1
+fi
+
+echo "$SHA" >"$STATE/live-sha"
+rm -f "$STATE/failed-sha"
+log "live: $SHORT"
+
+# ───────────────────────────── after a good deploy ─────────────────────────────
+
+# The server's own tooling (these scripts, the systemd units, the Caddy template) ships in the repo under deploy/vm,
+# so improving it is just another push. Files are swapped in by rename, so a running copy of this script is unaffected.
+refresh_tooling() {
+  local src=$NEW/deploy/vm f name units_changed=0
+  [[ -d $src ]] || return 0
+  for f in "$src"/bin/*; do
+    [[ -f $f ]] || continue
+    name=${f##*/}
+    if ! cmp -s "$f" "$BIN_DIR/$name"; then
+      install -m 0755 "$f" "$BIN_DIR/.$name.new"
+      mv -f "$BIN_DIR/.$name.new" "$BIN_DIR/$name"
+    fi
+  done
+  for f in "$src"/systemd/*; do
+    [[ -f $f ]] || continue
+    name=${f##*/}
+    if ! cmp -s "$f" "$UNIT_DIR/$name"; then
+      install -m 0644 "$f" "$UNIT_DIR/$name"
+      units_changed=1
+    fi
+  done
+  if ((units_changed)); then
+    "$SYSTEMCTL" daemon-reload || true
+  fi
+  if [[ -f $src/Caddyfile.template ]] && ! cmp -s "$src/Caddyfile.template" "$CONF/Caddyfile.template"; then
+    install -m 0644 "$src/Caddyfile.template" "$CONF/Caddyfile.template"
+    "$BIN_DIR/universe-config" caddy-reload >/dev/null 2>&1 || log "couldn't apply the new Caddy template (run: universe-config caddy-reload)"
+  fi
+}
+
+# Keeps the newest $KEEP_RELEASES release folders (always including the live one).
+prune_releases() {
+  local live d n=0
+  live=$(readlink -f "$CURRENT")
+  while IFS= read -r d; do
+    [[ -n $d ]] || continue
+    n=$((n + 1))
+    [[ $d == "$live" ]] && continue
+    if ((n > KEEP_RELEASES)); then
+      rm -rf "$d"
+    fi
+  done < <(find "$RELEASES" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' | sort -rn | cut -d' ' -f2-)
+}
+
+refresh_tooling || log "tooling refresh failed (the app itself is live)"
+prune_releases || true

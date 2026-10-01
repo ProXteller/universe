@@ -1,0 +1,9 @@
+[Unit]
+Description=Deploy the newest UniVerse commit from GitHub
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/universe-deploy
+TimeoutStartSec=30min

@@ -1,13 +1,14 @@
 /**
- * Orbit posts (SPEC §5.4): rows → `Post`, the following-only feed, per-user lists, detail, create / delete, likes,
- * polls. Every public read ANDs in `sqlNotBlocked` + `sqlAuthorVisible` + `sqlNotReported`; authors also see their
- * own held / hidden / removed rows (never `deleted`). No import-time DB access (R4): statements are prepared lazily.
+ * Orbit posts (SPEC §5.4, DECISIONS D8): rows → `Post`, the feed (follows ∪ self ∪ campus highlights), per-user lists,
+ * detail, create / delete, likes, polls. Every public read ANDs in `sqlNotBlocked` + `sqlAuthorVisible` +
+ * `sqlNotReported`; authors also see their own held / hidden / removed rows (never `deleted`). No import-time DB access
+ * (R4): statements are prepared lazily.
  */
 import type { ContentStatus, EpochMs, Id, MediaImage, UserListItem, UserSummary } from '@shared/core';
-import type { CreatePostRequest, LikeState, OrbitFeedResponse, Post, PostPoll } from '@shared/orbit';
+import type { CreatePostRequest, LikeState, OrbitFeedResponse, OrbitHighlight, Post, PostPoll } from '@shared/orbit';
 import { db, inClause, json, newId, prep, tx } from '../../db/index';
 import { trackEvent } from '../../lib/analytics';
-import { HOUR, now } from '../../lib/clock';
+import { DAY, HOUR, now } from '../../lib/clock';
 import { followerIdsOf, sqlAuthorVisible, sqlNotBlocked, sqlNotReported } from '../../lib/graph';
 import { ApiError, decodeCursor, keysetWhere, paginate, type CursorValue } from '../../lib/http';
 import { blockedTarget, commitModeration, modCtx, moderateWrite, toAuthorNotice } from '../../lib/moderation/index';
@@ -15,7 +16,9 @@ import { assertAccountAge, enforceRateLimit } from '../../lib/rateLimit';
 import { notify, removeNotificationsFor } from '../../lib/notify';
 import { publishToUsers } from '../../lib/realtime';
 import { assertOwnImages } from '../../lib/uploads';
-import { markPublicActivity, unmarkPublicActivity, userListItemsByIds, userSummariesByIds, type AuthedUser } from '../../lib/users';
+import {
+  markPublicActivity, NEW_ACCOUNT_WINDOW_MS, unmarkPublicActivity, userListItemsByIds, userSummariesByIds, type AuthedUser,
+} from '../../lib/users';
 
 /* ───────────────────────────── rows ───────────────────────────── */
 
@@ -64,11 +67,69 @@ export function visiblePostsWhere(viewerId: Id): { sql: string; params: (string 
   };
 }
 
-/** Feed membership: authors the viewer follows, plus the viewer. */
+/** Feed membership, part 1: authors the viewer follows (any campus), plus the viewer. */
 function feedAuthorsWhere(viewerId: Id): { sql: string; params: string[] } {
   return {
     sql: '(p.author_id = ? OR p.author_id IN (SELECT followee_id FROM follows WHERE follower_id = ?))',
     params: [viewerId, viewerId],
+  };
+}
+
+/* ───────────────────────────── campus highlights (DECISIONS D8) ───────────────────────────── */
+
+/** How far back a campus post can count as popular. */
+export const HIGHLIGHT_WINDOW_MS = 7 * DAY;
+/** How long a verified campus org's post counts as an official update. */
+export const OFFICIAL_WINDOW_MS = 3 * DAY;
+/** "Popular" never means less than this, however quiet the campus is. */
+export const HIGHLIGHT_MIN_SCORE = 5;
+/** Below this many campus posts in the window there is no meaningful "typical post": the floor alone applies. */
+export const HIGHLIGHT_MEDIAN_SAMPLE = 10;
+
+/** Engagement of `orbit_posts p`: likes + 2 × comments (a conversation) + half the poll votes. */
+const SCORE_SQL = `(p.like_count + 2 * p.comment_count + COALESCE((SELECT SUM(_po.vote_count) FROM orbit_poll_options _po WHERE _po.post_id = p.id), 0) / 2)`;
+
+export interface HighlightRule {
+  /** Posts created before this are never highlights. */
+  since: EpochMs;
+  /** Verified-org posts created at or after this are "official" highlights without needing engagement. */
+  officialSince: EpochMs;
+  /** Engagement a campus post needs to be "popular". */
+  minScore: number;
+}
+
+/**
+ * "Popular" = more engagement than the typical (lower-median) active post of that campus in the window — so the bar
+ * scales with the campus — and never less than `HIGHLIGHT_MIN_SCORE`. With fewer than `HIGHLIGHT_MEDIAN_SAMPLE` posts
+ * in the window only the floor applies (a handful of posts has no "typical").
+ */
+export function campusHighlightRule(universityId: Id, at: EpochMs = now()): HighlightRule {
+  const since = at - HIGHLIGHT_WINDOW_MS;
+  const scores = (
+    db
+      .prepare(`SELECT ${SCORE_SQL} AS s FROM orbit_posts p WHERE p.university_id = ? AND p.status = 'active' AND p.created_at >= ? ORDER BY s`)
+      .all(universityId, since) as { s: number }[]
+  ).map((r) => r.s);
+  const median = scores.length >= HIGHLIGHT_MEDIAN_SAMPLE ? scores[Math.floor((scores.length - 1) / 2)]! : 0;
+  return { since, officialSince: at - OFFICIAL_WINDOW_MS, minScore: Math.max(HIGHLIGHT_MIN_SCORE, median + 1) };
+}
+
+/**
+ * Feed membership, part 2 — campus highlights: posts from the viewer's OWN campus by someone they don't follow, active,
+ * inside the window, that are popular (or a recent post by a verified campus org). Only established accounts are ever
+ * pushed to non-followers: never a minor's post, never an account younger than 72 h, never one still restricted after a
+ * suspension. Blocks, reports and author status apply on top through `visiblePostsWhere`.
+ */
+function highlightWhere(viewer: Pick<AuthedUser, 'id' | 'universityId'>, rule: HighlightRule, at: EpochMs): { sql: string; params: (string | number)[] } {
+  return {
+    sql: `(p.university_id = ? AND p.author_id != ? AND p.status = 'active' AND p.created_at >= ?
+      AND NOT EXISTS (SELECT 1 FROM follows _hf WHERE _hf.follower_id = ? AND _hf.followee_id = p.author_id)
+      AND EXISTS (SELECT 1 FROM users _hu WHERE _hu.id = p.author_id
+        AND (_hu.account_type = 'org' OR _hu.is_adult = 1)
+        AND _hu.created_at <= ?
+        AND (_hu.restricted_until IS NULL OR _hu.restricted_until <= ?)
+        AND (${SCORE_SQL} >= ? OR (_hu.account_type = 'org' AND _hu.is_verified = 1 AND p.created_at >= ?))))`,
+    params: [viewer.universityId, viewer.id, rule.since, viewer.id, at - NEW_ACCOUNT_WINDOW_MS, at, rule.minScore, rule.officialSince],
   };
 }
 
@@ -178,30 +239,50 @@ function toPost(row: PostRow, author: UserSummary, liked: boolean, poll: PostPol
 
 const postKey = (r: PostRow): CursorValue => ({ k: r.created_at, id: r.id });
 
-/** Follows ∪ self, strictly `created_at DESC, id DESC`, nothing injected. */
+type FeedRow = PostRow & { _score: number; _followed: number };
+
+/**
+ * Follows ∪ self (any campus) ∪ campus highlights, strictly `created_at DESC, id DESC` — highlights are interleaved by
+ * time, never pinned or re-ranked, so paging and "New since your last visit" keep working. A highlight carries
+ * `highlight: 'popular' | 'official'` so the card can say why it is there.
+ */
 export function listFeed(viewer: AuthedUser, page: { cursor?: string; limit: number }): OrbitFeedResponse {
+  const at = now();
   const cur = decodeCursor(page.cursor);
   const vis = visiblePostsWhere(viewer.id);
   const who = feedAuthorsWhere(viewer.id);
+  const rule = campusHighlightRule(viewer.universityId, at);
+  const hl = highlightWhere(viewer, rule, at);
   const ks = keysetWhere('p.created_at', 'p.id', cur, 'desc');
   const rows = db
     .prepare(
-      `SELECT p.* FROM orbit_posts p WHERE ${who.sql} AND ${vis.sql} AND ${ks.sql}
+      `SELECT p.*, ${SCORE_SQL} AS _score, ${who.sql} AS _followed FROM orbit_posts p
+        WHERE (${who.sql} OR ${hl.sql}) AND ${vis.sql} AND ${ks.sql}
         ORDER BY p.created_at DESC, p.id DESC LIMIT ?`,
     )
-    .all(...who.params, ...vis.params, ...ks.params, page.limit + 1) as PostRow[];
+    .all(...who.params, ...who.params, ...hl.params, ...vis.params, ...ks.params, page.limit + 1) as FeedRow[];
   const paged = paginate(rows, page.limit, postKey, (r) => r);
+  const posts = serializePosts(paged.items, viewer.id);
+  const items = posts.map((post, i): Post => {
+    const row = paged.items[i]!;
+    if (row._followed) return post;
+    const highlight: OrbitHighlight = row._score >= rule.minScore ? 'popular' : 'official';
+    return { ...post, highlight };
+  });
   const visit = prep('SELECT last_seen_at FROM orbit_visits WHERE user_id = ?').get(viewer.id) as { last_seen_at: EpochMs } | undefined;
   const following = prep('SELECT following_count AS n FROM users WHERE id = ?').get(viewer.id) as { n: number } | undefined;
   return {
-    items: serializePosts(paged.items, viewer.id),
+    items,
     nextCursor: paged.nextCursor,
     lastVisitAt: visit?.last_seen_at ?? null,
     followingCount: following?.n ?? 0,
   };
 }
 
-/** How many feed posts arrived after `since` (the client's newest loaded `createdAt`). */
+/**
+ * How many posts from FOLLOWED authors (and the viewer) arrived after `since` (the client's newest loaded `createdAt`).
+ * Campus highlights never drive the "New posts" pill: they are picked up on the next refresh.
+ */
 export function countNewSince(viewer: AuthedUser, since: EpochMs): number {
   const vis = visiblePostsWhere(viewer.id);
   const who = feedAuthorsWhere(viewer.id);

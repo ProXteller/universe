@@ -4,8 +4,10 @@ The campus super-app. Sign-up requires a university email address.
 
 - **Home**: three swipeable tabs.
   - **Reels**: vertical videos, 60 seconds max.
-  - **Buzz**: anonymous posts and threads, moderated by the team.
-  - **Orbit**: posts only from the people and orgs you follow.
+  - **Buzz**: anonymous posts and threads, moderated by the team. Campus and Global are separate feeds; search,
+    titles, photos and one video per buzz.
+  - **Orbit**: posts from the people and orgs you follow (any campus), plus popular and official posts from your own
+    campus, labelled so you know why they're there.
 - **Discover**: search and people you may know. Only real public profiles appear here, never Buzz.
 - **Messages**: DMs, groups and course chats, in real time.
 - **Roommates**: post that you're looking, or just set filters and see your match %.
@@ -83,6 +85,10 @@ attackers tried to unmask Buzz authors and break authorization. Every finding th
 
 ## Going to production
 
+**Free hosting, step by step:** see [`deploy/README.md`](deploy/README.md). One paste creates an Azure for Students
+server (no credit card) that serves the app over HTTPS, keeps the data, backs it up nightly and redeploys itself on
+every `git push`.
+
 Set these environment variables for the server:
 
 | Variable | Why |
@@ -92,6 +98,7 @@ Set these environment variables for the server:
 | `STAFF_EMAILS` | `you@yourco.com:admin,mod@yourco.com:moderator`. These exact addresses can sign in without a university email, so your team can moderate |
 | `BUZZ_ALIAS_SECRET`, `CURSOR_SECRET` | Long random strings. Keep them stable; rotating the alias secret changes every alias |
 | `DB_PATH` | Where the SQLite file lives (put it on a persistent disk) |
+| `UPLOADS_DIR` | Where uploaded photos and videos are stored (same persistent disk; default `server/uploads`) |
 | `TRUST_PROXY` | Set this when running behind a load balancer, so rate limits see real client IPs |
 | `MODERATION_AI_API_KEY` (optional) | Enables a second-pass AI classifier on top of the built-in rule engine. It can only escalate, never allow |
 

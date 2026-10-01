@@ -1,0 +1,228 @@
+#!/usr/bin/env bash
+# universe-config — the one command for running UniVerse on this server.
+# Run it as root. On Azure you don't even need SSH: VM → Operations → Run command → RunShellScript.
+set -Eeuo pipefail
+
+CONF=${UNIVERSE_CONF:-/etc/universe}
+STATE=${UNIVERSE_STATE:-/var/lib/universe}
+ROOT=${UNIVERSE_ROOT:-/opt/universe}
+APP_USER=${UNIVERSE_USER:-universe}
+SYSTEMCTL=${UNIVERSE_SYSTEMCTL:-systemctl}
+HEALTH_URL=${UNIVERSE_HEALTH_URL:-http://127.0.0.1:4000/api/health}
+CADDYFILE=${UNIVERSE_CADDYFILE:-/etc/caddy/Caddyfile}
+BIN_DIR=${UNIVERSE_BIN_DIR:-/usr/local/bin}
+ENV_FILE=$CONF/universe.env
+
+usage() {
+  cat <<'TXT'
+universe-config <command>
+
+  status                         what's live, the web address, admins, email, the deploy key
+  domain <name>                  serve the app at https://<name>
+                                 (e.g. universe-ssvay.eastus.cloudapp.azure.com, or your own domain)
+  admin <email> [moderator]      let <email> sign in as staff (admin by default), even without a university email
+  email <resend-api-key> <from>  turn on sign-in emails, e.g.: email re_xxx "UniVerse <login@yourdomain.me>"
+  repo <git-url> [branch]        which GitHub repo/branch to deploy (default branch: main)
+  deploy-key                     the key to add on GitHub (repo → Settings → Deploy keys)
+  deploy                         build and deploy the newest commit now
+  logs [lines]                   the app's recent log (default 80 lines)
+  backup                         back up the database now
+TXT
+}
+
+die() {
+  echo "error: $*" >&2
+  exit 1
+}
+
+need_root() {
+  [[ $(id -u) -eq 0 ]] || die "run this as root (sudo universe-config …)"
+}
+
+get_env() {
+  local line
+  line=$(grep -m1 "^$1=" "$ENV_FILE" 2>/dev/null || true)
+  line=${line#*=}
+  line=${line#\"}
+  line=${line%\"}
+  printf '%s' "$line"
+}
+
+# Values are stored double-quoted (systemd's EnvironmentFile strips the quotes), so they can't contain quotes,
+# backslashes or line breaks. Checked for every value BEFORE anything is written.
+check_value() {
+  [[ $2 != *$'\n'* && $2 != *'"'* && $2 != *\\* ]] || die "$1 can't contain quotes, backslashes or line breaks"
+}
+
+# set_env KEY VALUE (the value has passed check_value)
+set_env() {
+  local key=$1 value=$2 tmp
+  tmp=$(mktemp "$CONF/.env.XXXXXX")
+  grep -v "^$key=" "$ENV_FILE" >"$tmp" 2>/dev/null || true
+  printf '%s="%s"\n' "$key" "$value" >>"$tmp"
+  chmod 640 "$tmp"
+  chown "root:$APP_USER" "$tmp" 2>/dev/null || true
+  mv -f "$tmp" "$ENV_FILE"
+}
+
+healthy() {
+  local i
+  for ((i = 0; i < ${UNIVERSE_HEALTH_TRIES:-30}; i++)); do
+    if curl -fsS --max-time 3 "$HEALTH_URL" 2>/dev/null | grep -q '"ok":true'; then
+      return 0
+    fi
+    sleep 2
+  done
+  return 1
+}
+
+# Restarts the app with the new settings; if it doesn't come back, the previous settings are restored.
+apply_env_change() {
+  local backup=$1
+  if [[ ! -e $ROOT/current ]]; then
+    rm -f "$backup"
+    echo "Saved. (The app isn't deployed yet; it will use this when it starts.)"
+    return 0
+  fi
+  "$SYSTEMCTL" restart universe || true
+  if healthy; then
+    rm -f "$backup"
+    echo "Saved, and the app restarted fine."
+  else
+    mv -f "$backup" "$ENV_FILE"
+    "$SYSTEMCTL" restart universe || true
+    echo "The app didn't start with that setting, so the previous settings are back. Its log said:" >&2
+    journalctl -u universe -n 15 --no-pager 2>/dev/null | tail -n 15 >&2 || true
+    exit 1
+  fi
+}
+
+backup_env() {
+  local b
+  b=$(mktemp "$CONF/.env.bak.XXXXXX")
+  cp -p "$ENV_FILE" "$b"
+  printf '%s' "$b"
+}
+
+render_caddy() {
+  local domain tmp
+  domain=$(cat "$CONF/domain" 2>/dev/null || true)
+  tmp=$(mktemp)
+  if [[ -n $domain ]]; then
+    sed "s/__DOMAIN__/$domain/g" "$CONF/Caddyfile.template" >"$tmp"
+  else
+    printf ':80 {\n\trespond "UniVerse is installed. Next step: universe-config domain <your-address>" 200\n}\n' >"$tmp"
+  fi
+  if command -v caddy >/dev/null 2>&1 && ! caddy validate --config "$tmp" --adapter caddyfile >/dev/null 2>&1; then
+    caddy validate --config "$tmp" --adapter caddyfile >&2 || true
+    rm -f "$tmp"
+    die "the generated Caddy config is invalid; nothing was changed"
+  fi
+  install -m 0644 "$tmp" "$CADDYFILE"
+  rm -f "$tmp"
+  "$SYSTEMCTL" reload caddy 2>/dev/null || "$SYSTEMCTL" restart caddy
+}
+
+cmd=${1:-help}
+shift || true
+
+case $cmd in
+  status)
+    domain=$(cat "$CONF/domain" 2>/dev/null || true)
+    live=$(cat "$STATE/live-sha" 2>/dev/null || true)
+    failed=$(cat "$STATE/failed-sha" 2>/dev/null || true)
+    echo "Address:   ${domain:+https://$domain}${domain:-not set yet (universe-config domain <name>)}"
+    echo "Live:      ${live:+commit ${live:0:12}}${live:-nothing deployed yet}"
+    [[ -n $failed ]] && echo "Skipped:   commit ${failed:0:12} failed to build or start (see $STATE/last-build.log / last-crash.log)"
+    if curl -fsS --max-time 3 "$HEALTH_URL" 2>/dev/null | grep -q '"ok":true'; then echo "App:       running"; else echo "App:       not answering"; fi
+    staff=$(get_env STAFF_EMAILS)
+    echo "Staff:     ${staff:-none yet (universe-config admin <your-email>)}"
+    if [[ -n $(get_env RESEND_API_KEY) ]]; then echo "Email:     on, from $(get_env MAIL_FROM)"; else echo "Email:     off (sign-up is closed until: universe-config email …)"; fi
+    echo "Data:      $(du -sh "$STATE" 2>/dev/null | cut -f1) in $STATE ($(df -h "$STATE" | awk 'NR==2 {print $4}') free)"
+    echo "Deploy key (GitHub → repo → Settings → Deploy keys):"
+    echo "  $(cat "$CONF/deploy_key.pub" 2>/dev/null || echo 'missing')"
+    ;;
+  domain)
+    need_root
+    name=${1:-}
+    name=${name#https://}
+    name=${name#http://}
+    name=${name%%/*}
+    [[ $name =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,63}$ ]] || die "usage: universe-config domain <name>, e.g. universe-ssvay.eastus.cloudapp.azure.com"
+    printf '%s\n' "${name,,}" >"$CONF/domain"
+    render_caddy
+    echo "The app will be at https://${name,,} (the first visit can take a minute while the HTTPS certificate is issued)."
+    echo "The name must already point at this server's public IP."
+    ;;
+  admin)
+    need_root
+    email=${1:-}
+    role=${2:-admin}
+    email=${email,,}
+    [[ $email =~ ^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$ ]] || die "usage: universe-config admin <email> [moderator]"
+    [[ $role == admin || $role == moderator ]] || die "the role must be admin or moderator"
+    current=$(get_env STAFF_EMAILS)
+    next=""
+    IFS=',' read -ra entries <<<"$current"
+    for e in "${entries[@]}"; do
+      e=${e// /}
+      [[ -z $e || ${e%%:*} == "$email" ]] && continue
+      next+="${next:+,}$e"
+    done
+    next+="${next:+,}$email:$role"
+    check_value STAFF_EMAILS "$next"
+    b=$(backup_env)
+    set_env STAFF_EMAILS "$next"
+    apply_env_change "$b"
+    echo "Staff now: $next"
+    ;;
+  email)
+    need_root
+    key=${1:-}
+    from=${2:-}
+    [[ $key == re_* ]] || die 'usage: universe-config email <resend-api-key> "UniVerse <login@yourdomain.me>" (Resend keys start with re_)'
+    [[ $from == *@* ]] || die 'give the sender too, e.g. "UniVerse <login@yourdomain.me>" (it must be on a domain you verified in Resend)'
+    check_value RESEND_API_KEY "$key"
+    check_value MAIL_FROM "$from"
+    b=$(backup_env)
+    set_env RESEND_API_KEY "$key"
+    set_env MAIL_FROM "$from"
+    apply_env_change "$b"
+    echo "Sign-in emails will come from: $from"
+    ;;
+  repo)
+    need_root
+    url=${1:-}
+    branch=${2:-main}
+    [[ -n $url ]] || die "usage: universe-config repo git@github.com:<you>/<repo>.git [branch]"
+    printf 'REPO_URL="%s"\nBRANCH="%s"\n' "$url" "$branch" >"$CONF/deploy.conf"
+    echo "Will deploy $url ($branch)."
+    ;;
+  deploy-key)
+    echo "Add this on GitHub: your repo → Settings → Deploy keys → Add deploy key (read-only is enough):"
+    echo
+    cat "$CONF/deploy_key.pub"
+    ;;
+  deploy)
+    need_root
+    "$BIN_DIR/universe-deploy" --force
+    ;;
+  logs)
+    journalctl -u universe -n "${1:-80}" --no-pager
+    ;;
+  backup)
+    need_root
+    "$BIN_DIR/universe-backup"
+    ;;
+  caddy-reload)
+    need_root
+    render_caddy
+    ;;
+  help | -h | --help)
+    usage
+    ;;
+  *)
+    usage
+    exit 1
+    ;;
+esac

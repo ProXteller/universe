@@ -1,0 +1,10 @@
+[Unit]
+Description=Check GitHub for a new UniVerse commit every 2 minutes
+
+[Timer]
+OnBootSec=1min
+OnUnitInactiveSec=2min
+Unit=universe-deploy.service
+
+[Install]
+WantedBy=timers.target

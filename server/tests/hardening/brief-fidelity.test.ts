@@ -309,11 +309,25 @@ describe('§0.1 Buzz — "monitored by the developers under community guidelines
 
 /* ═════════════════════════════ §0.1 Home › Orbit ═════════════════════════════ */
 
-describe('§0.1 Orbit — only people/orgs you follow appear', () => {
-  it('a non-followed account\'s post is absent; a followed person\'s and a followed org\'s posts are present', async () => {
+describe('§0.1 Orbit — people/orgs you follow, plus what is popular on your own campus (DECISIONS D8)', () => {
+  /** Every item of Maya's feed, walked page by page. */
+  async function walkFeed(): Promise<{ id: string; highlight?: string; author: { id: string; universityId: string } }[]> {
+    const out: { id: string; highlight?: string; author: { id: string; universityId: string } }[] = [];
+    let cursor: string | null = null;
+    for (let i = 0; i < 20; i++) {
+      const r = await maya.get(`/api/orbit/feed?limit=50${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`);
+      expect(r.status).toBe(200);
+      out.push(...r.body.items);
+      cursor = r.body.nextCursor;
+      if (!cursor) break;
+    }
+    return out;
+  }
+
+  it('an ordinary non-followed post is absent; followed person / org posts are present; every other author is a labelled same-campus highlight', async () => {
     const stranger = ctx.createUser({ displayName: 'Stranger Danger', handle: 'not_followed_1' });
     expect(row('SELECT 1 AS x FROM follows WHERE follower_id = ? AND followee_id = ?', U.mayachen, stranger.id)).toBeUndefined();
-    const sp = await ctx.as(stranger.id).post('/api/orbit/posts').send({ text: 'stranger post should never reach Maya' });
+    const sp = await ctx.as(stranger.id).post('/api/orbit/posts').send({ text: 'an ordinary stranger post should not reach Maya' });
     expect(sp.status, JSON.stringify(sp.body)).toBe(201);
 
     const followedPerson = row<{ id: string }>(
@@ -331,25 +345,38 @@ describe('§0.1 Orbit — only people/orgs you follow appear', () => {
     expect(fp.status).toBe(201);
     expect(fo.status).toBe(201);
 
-    // walk the whole feed
-    const ids: string[] = [];
-    const authors = new Set<string>();
-    let cursor: string | null = null;
-    for (let i = 0; i < 20; i++) {
-      const r = await maya.get(`/api/orbit/feed?limit=50${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`);
-      expect(r.status).toBe(200);
-      for (const p of r.body.items) {
-        ids.push(p.id);
-        authors.add(p.author.id);
-      }
-      cursor = r.body.nextCursor;
-      if (!cursor) break;
-    }
+    const items = await walkFeed();
+    const ids = items.map((p) => p.id);
     expect(ids).not.toContain(sp.body.id);
     expect(ids).toContain(fp.body.id);
     expect(ids).toContain(fo.body.id);
     const followees = new Set(rows<{ id: string }>('SELECT followee_id AS id FROM follows WHERE follower_id = ?', U.mayachen).map((r) => r.id));
-    for (const a of authors) expect(a === U.mayachen || followees.has(a), `author ${a} is not followed`).toBe(true);
+    const mayaUni = row<{ u: string }>('SELECT university_id AS u FROM users WHERE id = ?', U.mayachen).u;
+    for (const p of items) {
+      if (p.author.id === U.mayachen || followees.has(p.author.id)) {
+        expect(p.highlight, `followed post ${p.id} carries no label`).toBeUndefined();
+      } else {
+        expect(p.highlight, `author ${p.author.id} is not followed, so the post must be a labelled highlight`).toMatch(/^(popular|official)$/);
+        expect(p.author.universityId, `highlight ${p.id} must come from Maya's own campus`).toBe(mayaUni);
+      }
+    }
+  });
+
+  it('a popular post from Maya\'s campus reaches her (labelled); an equally popular one from another campus never does', async () => {
+    const near = ctx.createUser({ handle: 'near_popular_poster' });
+    const far = ctx.createUser({ handle: 'far_popular_poster', universityId: 'uni_umich' });
+    const np = await ctx.as(near.id).post('/api/orbit/posts').send({ text: 'the whole campus is talking about this' });
+    const fp = await ctx.as(far.id).post('/api/orbit/posts').send({ text: 'the whole of Ann Arbor is talking about this' });
+    expect(np.status).toBe(201);
+    expect(fp.status).toBe(201);
+    // real likes from real accounts on each campus, well above the seeded campus median
+    for (let i = 0; i < 25; i++) {
+      expect((await ctx.as(ctx.createUser().id).put(`/api/orbit/posts/${np.body.id}/like`)).status).toBe(200);
+      expect((await ctx.as(ctx.createUser({ universityId: 'uni_umich' }).id).put(`/api/orbit/posts/${fp.body.id}/like`)).status).toBe(200);
+    }
+    const items = await walkFeed();
+    expect(items.find((p) => p.id === np.body.id)?.highlight).toBe('popular');
+    expect(items.map((p) => p.id)).not.toContain(fp.body.id);
   });
 
   it('the "New posts" counter only counts followed authors', async () => {

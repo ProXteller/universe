@@ -17,6 +17,8 @@ CREATE TABLE IF NOT EXISTS orbit_posts (
 );
 CREATE INDEX IF NOT EXISTS idx_orbit_posts_author ON orbit_posts(author_id, status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_orbit_posts_created ON orbit_posts(created_at DESC, id DESC);
+-- campus highlights (DECISIONS D8): the median-engagement scan + the per-campus membership test
+CREATE INDEX IF NOT EXISTS idx_orbit_posts_campus ON orbit_posts(university_id, status, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS orbit_poll_options (
   id         TEXT PRIMARY KEY,

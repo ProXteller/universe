@@ -11,8 +11,9 @@ import { now } from '../../lib/clock';
 import { registerCardResolver, registerContentAdapter, type ContentAdapter, type ContentSnapshot } from '../../lib/content';
 import { log } from '../../lib/logger';
 import { notifyAnonymous, registerNotificationHook, removeNotificationsFor } from '../../lib/notify';
-import { blindStaffContext, snippet } from './serialize';
-import { campusShortNames, getPost, recountReplies, setPostStatus, type BuzzRow } from './store';
+import { blindStaffContext, headline, snippet } from './serialize';
+import { registerBuzzSchemaUpgrade } from './schema';
+import { campusShortNames, getPost, parseMedia, recountReplies, setPostStatus, type BuzzRow } from './store';
 import { threadHref } from './votes';
 
 function entityTypeOf(row: BuzzRow): ContentEntityType {
@@ -35,8 +36,12 @@ function snapshot(row: BuzzRow): ContentSnapshot {
     autoHideImmune: row.auto_hide_immune === 1,
     createdAt: row.created_at,
     label: isRoot ? 'buzz' : 'reply',
-    fields: [{ field: 'body', text: row.text }, ...optionTexts.map((text) => ({ field: 'option', text }))],
-    media: [],
+    fields: [
+      ...(isRoot && row.title ? [{ field: 'title', text: row.title }] : []),
+      { field: 'body', text: row.text },
+      ...optionTexts.map((text) => ({ field: 'option', text })),
+    ],
+    media: isRoot ? parseMedia(row.media).map((m) => ({ url: m.url, kind: m.type })) : [],
     href: threadHref(row.root_id ?? row.id),
     parent: isRoot ? null : { entityType: row.parent_id === row.root_id ? 'buzz' : 'buzz_reply', entityId: row.parent_id ?? row.root_id! },
   };
@@ -97,6 +102,7 @@ let registered = false;
 export function registerBuzz(): void {
   if (registered) return;
   registered = true;
+  registerBuzzSchemaUpgrade();
   registerContentAdapter(makeAdapter('buzz'));
   registerContentAdapter(makeAdapter('buzz_reply'));
   registerCardResolver('buzz', (id) => {
@@ -106,7 +112,7 @@ export function registerBuzz(): void {
     // a small campus is never named next to a buzz (L18): its anonymity set could be a single person
     const campus = campusShortNames([row.university_id]).get(row.university_id);
     return {
-      title: snippet(row.text, 100),
+      title: snippet(headline(row), 100),
       subtitle: campus ? `Buzz · ${campus}` : 'Buzz',
       imageUrl: null,
       href: threadHref(row.id),

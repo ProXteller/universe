@@ -1,0 +1,6 @@
+[Unit]
+Description=Back up the UniVerse database
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/universe-backup

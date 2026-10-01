@@ -13,11 +13,11 @@
  * so root / parent chain / siblings are readable — while `isMine` stays false and no identity field ever exists.
  */
 import type { EpochMs, FeedScope, Id } from '@shared/core';
-import type { Buzz, BuzzAlias, BuzzItemStatus, BuzzPoll, BuzzReply, BuzzThread, MyBuzzItem } from '@shared/buzz';
+import type { Buzz, BuzzAlias, BuzzItemStatus, BuzzMedia, BuzzPoll, BuzzReply, BuzzThread, MyBuzzItem } from '@shared/buzz';
 import { MIN, now } from '../../lib/clock';
 import { aliasBook, aliasFor } from './alias';
 import {
-  campusShortNames, getPost, getRoot, hiddenAuthorsFor, isCollapsed, myVotesFor, pollsFor, threadParticipants, threadReplies,
+  campusShortNames, getPost, getRoot, hiddenAuthorsFor, isCollapsed, myVotesFor, parseMedia, pollsFor, threadParticipants, threadReplies,
   type BuzzRow, type PollData,
 } from './store';
 
@@ -64,6 +64,17 @@ function visibleText(row: BuzzRow, ctx: Pick<SerializeContext, 'viewerId' | 'sta
   return ctx.viewerId !== null && row.author_id === ctx.viewerId ? row.text : '';
 }
 
+/** Title + media follow the text rule exactly: a placeholder carries none of them. */
+function visibleTitle(row: BuzzRow, ctx: Pick<SerializeContext, 'viewerId' | 'staff'>): string {
+  return visibleText({ ...row, text: row.title ?? '' }, ctx);
+}
+
+function visibleMedia(row: BuzzRow, ctx: Pick<SerializeContext, 'viewerId' | 'staff'>): BuzzMedia[] {
+  // field by field from the allow-list (a stored object is never spread into a response)
+  if (visibleText({ ...row, text: 'x' }, ctx) === '') return [];
+  return parseMedia(row.media).map((m) => ({ type: m.type, url: m.url, width: m.width, height: m.height, durationMs: m.durationMs }));
+}
+
 function serializePoll(data: PollData | undefined, isMine: boolean, at: EpochMs): BuzzPoll | null {
   if (!data) return null;
   // minute-floored like createdAt: `closesAt − durationDays` must not recover the exact creation instant (L2)
@@ -96,6 +107,9 @@ export function serializeBuzz(row: BuzzRow, ctx: SerializeContext): Buzz {
     isOp: row.author_id === ctx.rootAuthorId,
     isMine,
     text: visibleText(row, ctx),
+    title: visibleTitle(row, ctx),
+    media: visibleMedia(row, ctx),
+    scope: row.scope === 'global' ? 'global' : 'campus',
     score: row.score,
     myVote: ctx.myVotes.get(row.id) ?? 0,
     collapsed: isCollapsed(row),
@@ -105,7 +119,7 @@ export function serializeBuzz(row: BuzzRow, ctx: SerializeContext): Buzz {
     poll: serializePoll(ctx.polls.get(row.id), isMine, ctx.at),
     replyCount: row.reply_count,
     locked: row.locked === 1,
-    campusShortName: ctx.scope === 'global' ? (ctx.campusNames.get(row.university_id) ?? null) : null,
+    campusShortName: row.scope === 'global' ? (ctx.campusNames.get(row.university_id) ?? null) : null,
     promptId: row.prompt_id,
   };
 }
@@ -147,7 +161,8 @@ export function feedContext(viewerId: Id | null, scope: FeedScope, rows: readonl
   const ids = rows.map((r) => r.id);
   const myVotes = myVotesFor(viewerId, ids);
   const polls = pollsFor(viewerId, ids);
-  const campusNames = scope === 'global' ? campusShortNames(rows.map((r) => r.university_id)) : new Map<Id, string>();
+  const globalRows = rows.filter((r) => r.scope === 'global');
+  const campusNames = globalRows.length > 0 ? campusShortNames(globalRows.map((r) => r.university_id)) : new Map<Id, string>();
   const at = now();
   const out = new Map<Id, SerializeContext>();
   for (const row of rows) {
@@ -245,7 +260,7 @@ export function threadContext(root: BuzzRow, viewerId: Id | null, postIds: reado
     myVotes: myVotesFor(viewerId, [root.id, ...postIds]),
     hiddenAuthors: hiddenAuthorsFor(viewerId, root.id),
     polls: pollsFor(viewerId, [root.id]),
-    campusNames: new Map(),
+    campusNames: root.scope === 'global' ? campusShortNames([root.university_id]) : new Map(),
     at: now(),
   };
 }
@@ -305,15 +320,20 @@ export function serializeMine(viewerId: Id, rows: readonly BuzzRow[]): MyBuzzIte
   const out: MyBuzzItem[] = [];
   for (const row of rows) {
     if (row.root_id === null) {
-      out.push({ item: serializeBuzz(row, feedCtx.get(row.id)!), threadSnippet: snippet(row.text) });
+      out.push({ item: serializeBuzz(row, feedCtx.get(row.id)!), threadSnippet: snippet(headline(row)) });
       continue;
     }
     const t = threads.get(row.root_id);
     if (!t) continue;
     const shape: ReplyShape = t.shapes.get(row.id) ?? { parentId: t.root.id, depth: 1, replyingToAuthorId: null };
-    out.push({ item: serializeReply(row, shape, t.ctx), threadSnippet: t.root.status === 'active' || t.root.author_id === viewerId ? snippet(t.root.text) : '' });
+    out.push({ item: serializeReply(row, shape, t.ctx), threadSnippet: t.root.status === 'active' || t.root.author_id === viewerId ? snippet(headline(t.root)) : '' });
   }
   return out;
+}
+
+/** What a buzz is "about" in one line: its title when it has one, else its body. */
+export function headline(row: Pick<BuzzRow, 'title' | 'text'>): string {
+  return row.title?.trim() ? row.title : row.text;
 }
 
 export function snippet(text: string, max = SNIPPET_MAX): string {

@@ -1,5 +1,5 @@
 /**
- * `orbit` slice types (SPEC §5.4) — public posts, the following-only feed, comments, polls.
+ * `orbit` slice types (SPEC §5.4, DECISIONS D8) — public posts, the feed (follows + self + campus highlights), comments, polls.
  * Types and constants only; zero npm imports. Every identity here is the REAL public profile (never Buzz).
  */
 import type { ContentStatus, EpochMs, Id, MediaImage, Paginated, UserSummary } from './core';
@@ -18,6 +18,13 @@ export interface PostPoll {
   myChoice: Id | null;
 }
 
+/**
+ * Why a post from someone the viewer does NOT follow is in their Orbit (DECISIONS D8). Only ever from the viewer's own
+ * campus: `popular` = more engagement than a typical campus post this week; `official` = a recent post by a verified
+ * campus org.
+ */
+export type OrbitHighlight = 'popular' | 'official';
+
 export interface Post {
   id: Id;
   author: UserSummary;
@@ -29,6 +36,8 @@ export interface Post {
   viewer: { liked: boolean; isSelf: boolean };
   status: ContentStatus;
   createdAt: EpochMs;
+  /** Feed only: present when the post is in the feed as a campus highlight (author not followed). */
+  highlight?: OrbitHighlight;
 }
 
 /** Text or images or poll required. */

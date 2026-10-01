@@ -1617,11 +1617,20 @@ export default function seed(kit: SeedKit): void {
   }
 
   /* ───────────── write ───────────── */
+  // Campus and Global are separate feeds. Other campuses' threads went to Global (that is how the hero campus sees them);
+  // about a quarter of the hero campus's own threads did too. A digest of the id decides (no rng draw, stable across
+  // runs); the SPEC-final ids (Maya's threads, fixtures) stay on campus.
+  const FINAL_IDS = new Set<Id>(['buzz_0001', 'buzz_0002', 'buzz_0003', 'buzz_0101', 'buzz_0102']);
+  const scopeOf = (p: Post): 'campus' | 'global' => {
+    if (p.rootId !== null || FINAL_IDS.has(p.id)) return 'campus';
+    if (p.universityId !== UNI.utexas) return 'global';
+    return crypto.createHash('sha256').update(`universe-seed:scope:${p.id}`).digest()[0]! % 4 === 0 ? 'global' : 'campus';
+  };
   const insPost = db.prepare(
-    `INSERT INTO buzz_posts (id, root_id, parent_id, depth, author_id, university_id, text, prompt_id, status, created_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?)`,
+    `INSERT INTO buzz_posts (id, root_id, parent_id, depth, author_id, university_id, text, scope, prompt_id, status, created_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
   );
-  for (const p of posts) insPost.run(p.id, p.rootId, p.parentId, p.depth, p.authorId, p.universityId, p.text, p.promptId, p.status, p.createdAt);
+  for (const p of posts) insPost.run(p.id, p.rootId, p.parentId, p.depth, p.authorId, p.universityId, p.text, scopeOf(p), p.promptId, p.status, p.createdAt);
 
   const insVote = db.prepare('INSERT OR IGNORE INTO buzz_votes (post_id, user_id, value, eligible, created_at) VALUES (?,?,?,?,?)');
   for (const v of votes) insVote.run(v.postId, v.userId, v.value, v.eligible, v.createdAt);

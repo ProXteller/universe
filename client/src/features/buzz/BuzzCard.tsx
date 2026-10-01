@@ -11,7 +11,8 @@ import { cn } from '@/lib/cn';
 import { routes } from '@/lib/links';
 import { ContentStatusChip } from '@/lib/moderation';
 import { removeBuzzItem } from './api';
-import { AliasLine, BuzzText, CollapsedFold, ItemMenu, PollView, ReplyCountButton, ShareButton, SupportLink, VoteCluster } from './parts';
+import { BuzzContent, BuzzMediaView } from './body';
+import { AliasLine, CollapsedFold, ItemMenu, PollView, ReplyCountButton, ShareButton, SupportLink, VoteCluster } from './parts';
 
 export interface BuzzCardProps {
   buzz: Buzz;
@@ -36,13 +37,14 @@ export const BuzzCard: FC<BuzzCardProps> = ({ buzz, linkToThread = true, classNa
           </div>
         }
       />
-      {linkToThread && buzz.text ? (
+      {linkToThread && (buzz.text || buzz.title) ? (
         <button type="button" className="text-left" onClick={() => navigate(routes.buzzThread(buzz.threadId))} aria-label="Open thread">
-          <BuzzText text={buzz.text} status={buzz.status} clamp />
+          <BuzzContent buzz={buzz} clamp />
         </button>
       ) : (
-        <BuzzText text={buzz.text} status={buzz.status} clamp={linkToThread} />
+        <BuzzContent buzz={buzz} clamp={linkToThread} />
       )}
+      <BuzzMediaView media={buzz.media} />
       {buzz.poll ? <PollView threadId={buzz.threadId} poll={buzz.poll} isMine={buzz.isMine} disabled={buzz.status !== 'active'} /> : null}
       {buzz.supportLink ? <SupportLink /> : null}
       <footer className="flex items-center gap-1">

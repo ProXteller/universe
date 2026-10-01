@@ -1,5 +1,6 @@
 /**
- * OrbitPane (SPEC §5.4, design §7.2): the following-only, strictly reverse-chronological feed. `FollowingReelsRail`
+ * OrbitPane (SPEC §5.4, design §7.2, DECISIONS D8): the strictly reverse-chronological feed of people and orgs you
+ * follow (any campus), with popular / official posts from your own campus mixed in by time. `FollowingReelsRail`
  * on top, PostCards separated by `line-subtle` dividers, "New since your last visit" divider, "New posts" pill
  * (ws `orbit.new_post` + 60 s `new-count`), caught-up end cap, FAB → composer sheet. The pane is its own Y scroller
  * under the Home top bar (no `<Screen>`; the pager owns the frame) and defers its first query until it is (nearly)
@@ -16,6 +17,7 @@ import { FollowingReelsRail } from '@/features/reels';
 import { routes } from '@/lib/links';
 import { spring, useReducedMotionPref } from '@/lib/motion';
 import { useRealtime } from '@/lib/realtime';
+import { useMe } from '@/lib/session';
 import { useHomeTab } from '@/stores/home';
 import { fetchNewCount, markFeedSeen, reloadFeed, useOrbitFeed } from './api';
 import { PostCard, PostSkeleton } from './PostCard';
@@ -28,6 +30,7 @@ const NEW_COUNT_EVERY_MS = 60_000;
 
 export const OrbitPane: FC<HomePaneProps> = ({ active }) => {
   const navigate = useNavigate();
+  const me = useMe();
   const reduced = useReducedMotionPref();
   const { progress, scrollTopSignal } = useHomeTab();
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -147,7 +150,7 @@ export const OrbitPane: FC<HomePaneProps> = ({ active }) => {
         <EmptyState
           icon={Orbit}
           title="Your Orbit is empty"
-          description="It only shows people and orgs you follow — no algorithm, no strangers."
+          description={`Posts from people and orgs you follow show up here, plus what's popular at ${me.university.shortName}.`}
           action={{ label: 'Find people to follow', onClick: () => navigate(routes.discover()) }}
           secondary={{ label: 'Write a post', onClick: openComposer }}
         />

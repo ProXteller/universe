@@ -1,8 +1,10 @@
 /**
  * Orbit seed (SPEC §5.4 / §7.5): ~90 posts at `full` (25 at `lite`), ~55 at the hero campus, 40 % with 1–4 photos
  * (generated nebula SVGs), 8 polls (3 at lite), a third from orgs; Maya's 5 posts are `post_0001…post_0005`.
- * Likes / comments come from the author's followers; every counter equals its rows; `markPublicActivity` is called
- * with the row's `created_at`; Maya gets ONE `post.like` (read, collapsed likers) + ONE `post.comment` (unread).
+ * Likes / comments come from the author's followers — except the "campus reach" pass (DECISIONS D8): the newest posts
+ * of two hero-campus students Maya does NOT follow also get likes from across the campus, so her Orbit shows campus
+ * highlights. Every counter equals its rows; `markPublicActivity` is called with the row's `created_at`; Maya gets ONE
+ * `post.like` (read, collapsed likers) + ONE `post.comment` (unread).
  * Deterministic: `kit.rng` only.
  */
 import type { EpochMs, Id, MediaImage } from '@shared/core';
@@ -331,6 +333,31 @@ export default function seed(kit: SeedKit): void {
         data: { snippet: p.spec.text.slice(0, 80) }, createdAt: latestLike, read: true,
       });
     }
+  }
+
+  // ── campus reach (DECISIONS D8). Maya follows most of the hero campus's active posters, so the newest posts of two
+  // hero students she does NOT follow pick up likes from across the campus (not only from the author's followers) and
+  // reach her Orbit as "Popular at UT Austin". No rng draw here: every later seed keeps its random stream.
+  const REACH_LIKES = full ? 24 : 12;
+  const mayaFollows = new Set(kit.follows(maya.id));
+  const campusLikers = kit.users.all
+    .filter((u) => u.universityId === HERO_UNI && u.accountType === 'student' && u.id !== maya.id && !staffIds.has(u.id) && !tooNew.has(u.id))
+    .map((u) => u.id)
+    .sort();
+  const reach = planned
+    .filter((p) => p.author.universityId === HERO_UNI && p.author.accountType === 'student' && p.author.id !== maya.id && !mayaFollows.has(p.author.id) && !p.spec.poll)
+    .sort((a, b) => b.createdAt - a.createdAt || (a.id < b.id ? -1 : 1))
+    .filter((p, i, list) => list.findIndex((q) => q.author.id === p.author.id) === i) // newest post per author
+    .slice(0, 2);
+  const recountLikes = db.prepare('UPDATE orbit_posts SET like_count = (SELECT COUNT(*) FROM orbit_likes WHERE post_id = ?) WHERE id = ?');
+  for (const p of reach) {
+    let added = 0;
+    for (const liker of campusLikers) {
+      if (added >= REACH_LIKES) break;
+      if (liker === p.author.id) continue;
+      if (insLike.run(p.id, liker, Math.min(kit.now, p.createdAt + (added + 1) * 7 * 60_000)).changes) added += 1;
+    }
+    recountLikes.run(p.id, p.id);
   }
 
   // Maya last opened Orbit two days ago → the "New since your last visit" divider has something to divide.

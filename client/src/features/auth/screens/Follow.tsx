@@ -31,7 +31,7 @@ import { InlineError, StepFooter, StepScreen, StepTitle } from '../shared';
 
 const COPY = {
   title: 'Build your Orbit',
-  sub: 'Orbit only shows people and orgs you follow — no algorithm, no strangers. Pick a few to start.',
+  sub: "Orbit shows posts from the people and orgs you follow, plus what's popular on your campus. Pick a few to start.",
   newCampus: (university: string) => `You're the first from ${university}. Here are people from other campuses while yours fills up.`,
   bring: 'Bring your campus with you',
   bringSub: 'Share your invite link — everyone who joins from it lands in your Orbit.',

@@ -160,7 +160,7 @@ describe('L18 small-population inference', () => {
     setNow(null);
     const { university } = resolveUniversityForEmail(`someone@${uniq('tinycollege').replace(/[^a-z0-9]/gi, '').toLowerCase()}.edu`);
     const lone = ctx.createUser({ universityId: university.id });
-    const buzz = await post(ctx.as(lone.id), uniq('Honestly thinking about transferring next year'));
+    const buzz = await post(ctx.as(lone.id), uniq('Honestly thinking about transferring next year'), { scope: 'global' });
 
     const { api: spy } = attacker();
     const global = await spy.get('/api/buzz/feed').query({ sort: 'new', scope: 'global', limit: 50 });
@@ -221,7 +221,7 @@ describe('probe: every Buzz response body, field by field', () => {
     setNow(null);
     const { api: spy } = attacker();
     const maya = ctx.as(DEMO.student);
-    const allowedBuzz = ['kind', 'id', 'threadId', 'alias', 'isOp', 'isMine', 'text', 'score', 'myVote', 'collapsed', 'status', 'supportLink', 'createdAt', 'poll', 'replyCount', 'locked', 'campusShortName', 'promptId'].sort();
+    const allowedBuzz = ['kind', 'id', 'threadId', 'alias', 'isOp', 'isMine', 'text', 'score', 'myVote', 'collapsed', 'status', 'supportLink', 'createdAt', 'poll', 'replyCount', 'locked', 'campusShortName', 'promptId', 'title', 'media', 'scope'].sort();
     const allowedReply = ['kind', 'id', 'threadId', 'alias', 'isOp', 'isMine', 'text', 'score', 'myVote', 'collapsed', 'status', 'supportLink', 'createdAt', 'parentId', 'depth', 'replyingTo'].sort();
     const threadIds = new Set<Id>();
     for (const who of [spy, maya]) {

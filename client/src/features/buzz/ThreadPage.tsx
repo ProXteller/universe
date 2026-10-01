@@ -18,6 +18,7 @@ import { ContentStatusChip, handleModerationError, showModerationNotice } from '
 import { useRealtime } from '@/lib/realtime';
 import { toast } from '@/lib/toast';
 import { invalidateThread, useBuzzReplies, useBuzzThread, useCreateReply } from './api';
+import { BuzzContent, BuzzMediaView } from './body';
 import { BuzzGatePanel, useBuzzGate } from './gate';
 import { AliasLine, BuzzText, CollapsedFold, ItemMenu, PollView, ShareButton, SupportLink, VoteCluster } from './parts';
 import { ensureBuzzStoreReset, useBuzzStore } from './store';
@@ -160,10 +161,14 @@ const ThreadScreen: FC<{ threadId: Id; onBack(): void }> = ({ threadId, onBack }
             <AliasLine alias={root.alias} isMine={root.isMine} createdAt={root.createdAt} size="md" trailing={root.isMine ? <ContentStatusChip status={root.status} /> : root.campusShortName ? <Badge variant="soft" tone="neutral">{root.campusShortName}</Badge> : null} />
             {root.collapsed && !root.isMine ? (
               <CollapsedFold id={root.id} reason="community">
-                <BuzzText text={root.text} status={root.status} large />
+                <BuzzContent buzz={root} large />
+                <BuzzMediaView media={root.media} className="mt-3" />
               </CollapsedFold>
             ) : (
-              <BuzzText text={root.text} status={root.status} large />
+              <>
+                <BuzzContent buzz={root} large />
+                <BuzzMediaView media={root.media} />
+              </>
             )}
             {root.poll ? <PollView threadId={root.id} poll={root.poll} isMine={root.isMine} disabled={root.status !== 'active'} /> : null}
             {root.supportLink ? <SupportLink /> : null}

@@ -393,6 +393,74 @@ function probeMp4(fd: number, fileSize: number): number | null {
   return walk(0, fileSize, 0);
 }
 
+/** Boxes that only carry metadata (QuickTime keys/ilst — GPS, device make/model, software — `©xyz`, XMP `uuid`). */
+const MP4_METADATA_BOXES = new Set(['udta', 'meta', 'uuid']);
+/** Containers walked to reach per-track metadata and timestamps. */
+const MP4_CONTAINERS = new Set(['moov', 'trak', 'mdia']);
+/** Header boxes whose creation / modification times are zeroed (they record the instant the video was shot). */
+const MP4_TIMED_BOXES = new Set(['mvhd', 'tkhd', 'mdhd']);
+
+/**
+ * Anonymous surfaces (Buzz): scrubs an MP4 / QuickTime file IN PLACE, without changing a single size or offset —
+ * metadata boxes (`udta`, `meta`, `uuid`) at the top level and inside moov / trak / mdia are renamed to `free` (every
+ * player skips a `free` box) and their payload is overwritten with zeros, and the creation / modification times in mvhd / tkhd / mdhd are zeroed. Phone recordings
+ * keep the location, the device model and the recording time in exactly those places. Idempotent. Returns false when
+ * the box structure could not be walked (the caller refuses the file rather than publishing it unscrubbed).
+ */
+export function scrubMp4Metadata(filePath: string): boolean {
+  let fd: number | null = null;
+  try {
+    fd = fs.openSync(filePath, 'r+');
+    const fileSize = fs.fstatSync(fd).size;
+    let boxes = 0;
+    const FREE = Buffer.from('free', 'latin1');
+    const ZEROS = Buffer.alloc(64 * 1024);
+    const walk = (start: number, end: number, depth: number): boolean => {
+      let pos = start;
+      while (pos + 8 <= end) {
+        boxes += 1;
+        if (boxes > MP4_MAX_BOXES) return false;
+        const h = readAt(fd!, pos, 16);
+        if (h.length < 8) return false;
+        let size = h.readUInt32BE(0);
+        const type = h.toString('latin1', 4, 8);
+        let headerLen = 8;
+        if (size === 1) {
+          if (h.length < 16) return false;
+          const big = h.readBigUInt64BE(8);
+          if (big > BigInt(Number.MAX_SAFE_INTEGER)) return false;
+          size = Number(big);
+          headerLen = 16;
+        } else if (size === 0) size = end - pos;
+        if (size < headerLen || pos + size > end) return false;
+        if (MP4_METADATA_BOXES.has(type)) {
+          // rename AND blank the payload: a renamed box would still hold the bytes for anyone with a hex editor
+          fs.writeSync(fd!, FREE, 0, 4, pos + 4);
+          for (let at = pos + headerLen, left = size - headerLen; left > 0; ) {
+            const n = Math.min(left, ZEROS.length);
+            fs.writeSync(fd!, ZEROS, 0, n, at);
+            at += n;
+            left -= n;
+          }
+        } else if (MP4_CONTAINERS.has(type) && depth < 3) {
+          if (!walk(pos + headerLen, pos + size, depth + 1)) return false;
+        } else if (MP4_TIMED_BOXES.has(type)) {
+          const version = readAt(fd!, pos + headerLen, 1)[0] ?? 0;
+          const n = version === 1 ? 16 : 8;
+          if (headerLen + 4 + n <= size) fs.writeSync(fd!, Buffer.alloc(n), 0, n, pos + headerLen + 4);
+        }
+        pos += size;
+      }
+      return true;
+    };
+    return walk(0, fileSize, 0);
+  } catch {
+    return false;
+  } finally {
+    if (fd !== null) fs.closeSync(fd);
+  }
+}
+
 // The leading EBML header (0x1A45DFA3) is skipped as an ordinary sized element.
 const SEGMENT = 0x18538067;
 const INFO = 0x1549a966;
@@ -671,9 +739,16 @@ export function getUpload(id: Id): UploadRow | null {
 }
 
 /** The caller's own upload by id or by `/uploads/...` url, of the given kind — 404 otherwise. */
-export function assertOwnUpload(user: AuthedUser, uploadIdOrUrl: string, kind: 'image' | 'video'): UploadRow {
+export function assertOwnUpload(
+  user: AuthedUser,
+  uploadIdOrUrl: string,
+  kind: 'image' | 'video',
+  opts: { allowBuzz?: boolean } = {},
+): UploadRow {
   const row = (prep('SELECT * FROM uploads WHERE id = ? OR url = ?').get(uploadIdOrUrl, uploadIdOrUrl) as UploadRow | undefined) ?? null;
   if (!row || row.user_id !== user.id || row.kind !== kind) throw ApiError.notFound('Upload not found');
+  // A file attached to an anonymous buzz can never reappear on a public surface (that would link the buzz to its author).
+  if (row.purpose === 'buzz' && !opts.allowBuzz) throw ApiError.notFound('Upload not found');
   return row;
 }
 

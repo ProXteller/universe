@@ -1,0 +1,10 @@
+[Unit]
+Description=Back up the UniVerse database every night
+
+[Timer]
+OnCalendar=*-*-* 08:30:00 UTC
+Persistent=true
+Unit=universe-backup.service
+
+[Install]
+WantedBy=timers.target

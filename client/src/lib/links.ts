@@ -30,6 +30,7 @@ export const routes = {
 
   buzzThread: (id: Id) => `/buzz/${enc(id)}`,
   buzzMine: () => '/buzz/mine',
+  buzzSearch: () => '/buzz/search',
 
   post: (id: Id) => `/post/${enc(id)}`,
 
