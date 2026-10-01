@@ -43,6 +43,20 @@ has a **Fill** button.
 Any `*.edu`, `*.ac.<cc>` or `*.edu.<cc>` address works for a new sign-up. An unknown college is created automatically.
 Gmail, Outlook and disposable-email addresses are refused.
 
+## Use it on your phone (same Wi-Fi)
+
+```bash
+npm run dev:phone
+```
+
+The terminal prints a `Network:` address, for example `http://192.168.1.222:5173`. Open that address in Safari or
+Chrome on a phone connected to the same Wi-Fi. To get an app icon, tap Share → **Add to Home Screen**; the app then
+opens full-screen with no browser bars.
+
+- The Mac must be awake and running `npm run dev:phone`. If the Mac's network address changes, the terminal prints the new one.
+- Anyone on the same Wi-Fi can reach it, so use it on your home network, not on public Wi-Fi.
+- To use it away from home, it needs to be hosted (see "Going to production").
+
 ## Check it
 
 ```bash
