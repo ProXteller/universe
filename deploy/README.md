@@ -132,6 +132,46 @@ server's **Public IP address** (on the VM's Overview page). Then run:
 universe-config domain yourdomain.me
 ```
 
+## Hosting on Oracle Cloud instead (Always Free)
+
+Oracle's free tier never expires and is bigger than Azure's (up to 4 CPUs and 24 GB of memory). The same
+`cloud-init.yaml` works; only the clicks differ. Sign-up asks for a card to verify you, but nothing is charged unless
+you upgrade the account yourself.
+
+1. **Sign up** at **oracle.com/cloud/free**. Pick a **Home Region** near your users (e.g. *US East (Ashburn)*,
+   *US Midwest (Chicago)* or *US West (Phoenix)*). It can't be changed later, and free servers only run there.
+2. **Create the server:** ☰ → **Compute → Instances → Create instance**.
+   - Name: `universe`
+   - **Image and shape → Edit**: Image **Canonical Ubuntu 24.04** (not "Minimal"); Shape **Ampere → VM.Standard.A1.Flex**
+     with **2 OCPUs, 12 GB memory** (labelled *Always Free-eligible*). If it says *out of capacity*, try again later,
+     pick another availability domain, or use **VM.Standard.E2.1.Micro** (also free, but much smaller).
+   - **Networking**: create a new virtual cloud network and public subnet, **Assign a public IPv4 address**: yes.
+   - **Add SSH keys**: **Generate a key pair for me → Save private key**. Keep the file safe.
+   - **Show advanced options → Management → Initialization script → Paste cloud-init script**: paste the whole
+     `cloud-init.yaml`.
+   - **Create**. Copy the **Public IP address** from the instance page when it's running.
+3. **Open the web ports in Oracle's network:** on the instance page, click the **Subnet** link → **Security** (or
+   **Security Lists**) → **Default Security List** → **Add Ingress Rules**. Source CIDR `0.0.0.0/0`, IP protocol TCP,
+   destination port range `80,443` → **Add**. (The server's own firewall is opened by `cloud-init.yaml`.)
+4. **Connect** from your Mac's Terminal (the key file name is whatever you saved):
+
+   ```bash
+   chmod 600 ~/Downloads/ssh-key-*.key
+   ssh -i ~/Downloads/ssh-key-*.key ubuntu@<public IP>
+   ```
+
+   Wait until `cloud-init status` says `done` (about 10 minutes after creation).
+5. Continue with steps 4–6 above, putting `sudo` in front of each command. There's no Azure DNS name, so for the address
+   use the free `sslip.io` name made from your IP (dots become dashes):
+
+   ```bash
+   sudo universe-config deploy-key
+   sudo universe-config domain 129-146-12-34.sslip.io
+   sudo universe-config admin your-email@example.com
+   ```
+
+   Later, point your own domain's **A record** at the IP and run `sudo universe-config domain yourdomain.me`.
+
 ---
 
 ## Making changes after launch

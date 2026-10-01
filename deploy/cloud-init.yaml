@@ -73,7 +73,7 @@ write_files:
     content: |
       #!/usr/bin/env bash
       # universe-config — the one command for running UniVerse on this server.
-      # Run it as root. On Azure you don't even need SSH: VM → Operations → Run command → RunShellScript.
+      # Run it as root (sudo). Over SSH, or on Azure without SSH: VM → Operations → Run command → RunShellScript.
       set -Eeuo pipefail
 
       CONF=${UNIVERSE_CONF:-/etc/universe}
@@ -92,7 +92,7 @@ write_files:
 
         status                         what's live, the web address, admins, email, the deploy key
         domain <name>                  serve the app at https://<name>
-                                       (e.g. universe-ssvay.eastus.cloudapp.azure.com, or your own domain)
+                                       (e.g. 129-146-12-34.sslip.io, an Azure DNS name, or your own domain)
         admin <email> [moderator]      let <email> sign in as staff (admin by default), even without a university email
         email <resend-api-key> <from>  turn on sign-in emails, e.g.: email re_xxx "UniVerse <login@yourdomain.me>"
         repo <git-url> [branch]        which GitHub repo/branch to deploy (default branch: main)
@@ -221,7 +221,7 @@ write_files:
           name=${name#https://}
           name=${name#http://}
           name=${name%%/*}
-          [[ $name =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,63}$ ]] || die "usage: universe-config domain <name>, e.g. universe-ssvay.eastus.cloudapp.azure.com"
+          [[ $name =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,63}$ ]] || die "usage: universe-config domain <name>, e.g. 129-146-12-34.sslip.io or yourdomain.me"
           printf '%s\n' "${name,,}" >"$CONF/domain"
           render_caddy
           echo "The app will be at https://${name,,} (the first visit can take a minute while the HTTPS certificate is issued)."
@@ -668,10 +668,20 @@ write_files:
       chmod 644 /etc/universe/deploy_key.pub
 
       # 6. firewall: SSH + web only (the app's own port 4000 is never exposed)
-      ufw allow OpenSSH >/dev/null
-      ufw allow 80/tcp >/dev/null
-      ufw allow 443/tcp >/dev/null
-      ufw --force enable >/dev/null
+      if [[ -f /etc/iptables/rules.v4 ]] && grep -q 'REJECT' /etc/iptables/rules.v4; then
+        # Oracle Cloud's Ubuntu images ship their own iptables rules (only SSH open, everything else rejected) and Oracle
+        # warns against enabling ufw on top of them. Open 80/443 in those rules instead and save them.
+        for port in 80 443; do
+          iptables -C INPUT -p tcp -m state --state NEW --dport "$port" -j ACCEPT 2>/dev/null ||
+            iptables -I INPUT -p tcp -m state --state NEW --dport "$port" -j ACCEPT
+        done
+        netfilter-persistent save >/dev/null 2>&1 || iptables-save >/etc/iptables/rules.v4
+      else
+        ufw allow OpenSSH >/dev/null
+        ufw allow 80/tcp >/dev/null
+        ufw allow 443/tcp >/dev/null
+        ufw --force enable >/dev/null
+      fi
 
       # 7. services
       systemctl daemon-reload

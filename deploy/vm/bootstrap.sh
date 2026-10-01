@@ -68,10 +68,20 @@ chmod 600 /etc/universe/deploy_key
 chmod 644 /etc/universe/deploy_key.pub
 
 # 6. firewall: SSH + web only (the app's own port 4000 is never exposed)
-ufw allow OpenSSH >/dev/null
-ufw allow 80/tcp >/dev/null
-ufw allow 443/tcp >/dev/null
-ufw --force enable >/dev/null
+if [[ -f /etc/iptables/rules.v4 ]] && grep -q 'REJECT' /etc/iptables/rules.v4; then
+  # Oracle Cloud's Ubuntu images ship their own iptables rules (only SSH open, everything else rejected) and Oracle
+  # warns against enabling ufw on top of them. Open 80/443 in those rules instead and save them.
+  for port in 80 443; do
+    iptables -C INPUT -p tcp -m state --state NEW --dport "$port" -j ACCEPT 2>/dev/null ||
+      iptables -I INPUT -p tcp -m state --state NEW --dport "$port" -j ACCEPT
+  done
+  netfilter-persistent save >/dev/null 2>&1 || iptables-save >/etc/iptables/rules.v4
+else
+  ufw allow OpenSSH >/dev/null
+  ufw allow 80/tcp >/dev/null
+  ufw allow 443/tcp >/dev/null
+  ufw --force enable >/dev/null
+fi
 
 # 7. services
 systemctl daemon-reload
