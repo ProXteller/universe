@@ -10,684 +10,229 @@ write_files:
       BRANCH="main"
   - path: /etc/universe/Caddyfile.template
     permissions: '0644'
+    encoding: gz+b64
     content: |
-      # Managed by universe-config (from deploy/vm/Caddyfile.template in the repo). __DOMAIN__ is filled in by
-      # `universe-config domain <name>`. Caddy gets and renews the HTTPS certificate on its own.
-      __DOMAIN__ {
-      	encode zstd gzip
-
-      	header {
-      		X-Content-Type-Options nosniff
-      		Referrer-Policy strict-origin-when-cross-origin
-      		Strict-Transport-Security "max-age=31536000"
-      		-Server
-      	}
-
-      	# the API, realtime, uploads and seed media → the app (WebSockets are proxied automatically)
-      	@app path /api /api/* /uploads/* /seed-media/* /ws
-      	handle @app {
-      		reverse_proxy 127.0.0.1:4000
-      	}
-
-      	# the web app's hashed files never change → cache them for a year; a missing one is a 404, never index.html
-      	handle /assets/* {
-      		root * /opt/universe/current/client/dist
-      		@exists file
-      		header @exists Cache-Control "public, max-age=31536000, immutable"
-      		file_server
-      	}
-
-      	# everything else → the web app; unknown paths get index.html (client-side routes), always revalidated
-      	handle {
-      		root * /opt/universe/current/client/dist
-      		header Cache-Control "no-cache"
-      		try_files {path} /index.html
-      		file_server
-      	}
-      }
+      H4sIAAAAAAACA5VSzU7cMBA+208xgkMBbX4otJVKW1HRQzlQUHel9rbM2pNkhGNHtsNuQFz7AH3E
+      Pknl7IK2e+sliZ2Z+f5mH67QYk0aFgP0lu/JB8qUsxXXcFB514KmzrihuG+LC9R6qNhQHqntDEYC
+      thAbAk+dO8xhPv9yffX58tt8DhygYmNIp5LFIPfhdne8di2yhQ8WW/p0m8M4HmqKAdBq8GRpGcbx
+      X2ezmyko8pErVgnXWeAYwC1tLrdQH6Ugq5wmeAhRQ/3AnZSiIdTk00/xM7twNpKN2WzoKLvuIjsb
+      wLpguaqkEN+pIu/JZzfOsBogRM8qZs5zzTZbNmQz5V0ImxspxHRdMfNoQ+d8zKakes9xgL0WVxnW
+      9PHk+M3J27Is96QQ2ZT8PXkpnqQU+6O8zzeXE/CEJnJLE+g741CvTQhEGlrSjPDn1++xGrsODn7Q
+      YurU3eiVJ+i8WzFpwD66FiMrNGY4lOI8FXcYGyiw4/FRHEGxQUifCSAbAdJpGaRo0GpDMLYmyzyN
+      qc0TxgDHr9/lZV7mx+9Py7LcVrGkReL2KkCDoSGd8qcANrWDatDWNGpQqBpKHS1UzgPCQOjPAKHl
+      ENjW4Cyl9UE4LU8nm362mlZ5E1vzQrDAECgmESNL5yIcQeG6WDwvWqF678nGQhlOL80hSiHOacUh
+      jvtJUjxvx/PtRaI3bol3Bva6fmFYTWA3yglw2/YRF4ZSqmnWPPyTbOI9xCYpIhPoJb+NT2fQ2zvr
+      lnbMJ6S931IJB2vOWWBN4F0fKRxOAM0ShwCe7tGwxkj6xY7/NGGjeketddkYT5IU/TBfR/iYGD5B
+      sR3CruIn+Rfq6P87SwQAAA==
   - path: /usr/local/bin/universe-backup
     permissions: '0755'
+    encoding: gz+b64
     content: |
-      #!/usr/bin/env bash
-      # universe-backup — a consistent copy of the database (safe while the app is running), kept for 14 days.
-      # universe-backup.timer runs it every night; `universe-config backup` runs it now.
-      set -Eeuo pipefail
-      STATE=${UNIVERSE_STATE:-/var/lib/universe}
-      DB=${UNIVERSE_DB:-$STATE/universe.db}
-      DEST=$STATE/backups
-      KEEP_DAYS=14
-
-      if [[ ! -f $DB ]]; then
-        echo "no database yet; nothing to back up"
-        exit 0
-      fi
-      mkdir -p "$DEST"
-      chmod 700 "$DEST"
-      out=$DEST/universe-$(date -u +%Y%m%d-%H%M%S).db
-      sqlite3 "$DB" ".timeout 10000" ".backup '$out'"
-      gzip -f "$out"
-      find "$DEST" -name 'universe-*.db.gz' -mtime +"$KEEP_DAYS" -delete
-      echo "backed up to $out.gz ($(du -h "$out.gz" | cut -f1))"
+      H4sIAAAAAAACA2VR0WrbMBR911ecqg5J1sl2WGHQkIeGGDbGxliyQSmllS3ZFo0lz5LSJVthH7Ev
+      3JcMOa032Jvuuefec8/R6UnibZfkSidS75BzW5NTeK12srOS5by49y1+//wFjsJoq6yT2qEw7R6m
+      hKslBHc851ZiYnkp8VCrrewbvG2hLDqvtdLV9CXuZetQmg6zcwi+t/H/UrFTjezCjIVykDvZ7aFV
+      Vbs57gZuYXSpKhxH7ga2Ng8xsdKBZdIbtKqVJVdbst5cbrJF9P3zh7dfsk/r7LYHLliy412yVXny
+      vPiRrJb/8lbLCxb15IESi/yRrLL1ZvHUOB5hybss+3i7urxaL2bnhKgS19c4ASsRrZa4uZmHSDQB
+      ZFEbUG3+5raXbg5tXK10BWd6W/AtDeRvyiElpSLNvVAdWAsaBXVKiroxAq/TdECMd4v+ORzLoong
+      ToJ5nI2uRs1IsNGb0fvRehqLnNivW+XkqzC/pKB99MY7zNI0TQPw9PvjyHg3pqQ6qDYYoqGmpFRa
+      PGuDad5IjAfhF7HI4+owBmvCWpzRaAiIggm5lU6SYxZBRgr4NpgPu+PqgEk0ER6sPqrF1YHiBwrv
+      wMrZdErJH59Eig+5AgAA
   - path: /usr/local/bin/universe-config
     permissions: '0755'
+    encoding: gz+b64
     content: |
-      #!/usr/bin/env bash
-      # universe-config — the one command for running UniVerse on this server.
-      # Run it as root (sudo). Over SSH, or on Azure without SSH: VM → Operations → Run command → RunShellScript.
-      set -Eeuo pipefail
-
-      CONF=${UNIVERSE_CONF:-/etc/universe}
-      STATE=${UNIVERSE_STATE:-/var/lib/universe}
-      ROOT=${UNIVERSE_ROOT:-/opt/universe}
-      APP_USER=${UNIVERSE_USER:-universe}
-      SYSTEMCTL=${UNIVERSE_SYSTEMCTL:-systemctl}
-      HEALTH_URL=${UNIVERSE_HEALTH_URL:-http://127.0.0.1:4000/api/health}
-      CADDYFILE=${UNIVERSE_CADDYFILE:-/etc/caddy/Caddyfile}
-      BIN_DIR=${UNIVERSE_BIN_DIR:-/usr/local/bin}
-      ENV_FILE=$CONF/universe.env
-
-      usage() {
-        cat <<'TXT'
-      universe-config <command>
-
-        status                         what's live, the web address, admins, email, the deploy key
-        domain <name>                  serve the app at https://<name>
-                                       (e.g. 129-146-12-34.sslip.io, an Azure DNS name, or your own domain)
-        admin <email> [moderator]      let <email> sign in as staff (admin by default), even without a university email
-        email <resend-api-key> <from>  turn on sign-in emails, e.g.: email re_xxx "UniVerse <login@yourdomain.me>"
-        repo <git-url> [branch]        which GitHub repo/branch to deploy (default branch: main)
-        deploy-key                     the key to add on GitHub (repo → Settings → Deploy keys)
-        deploy                         build and deploy the newest commit now
-        logs [lines]                   the app's recent log (default 80 lines)
-        backup                         back up the database now
-      TXT
-      }
-
-      die() {
-        echo "error: $*" >&2
-        exit 1
-      }
-
-      need_root() {
-        [[ $(id -u) -eq 0 ]] || die "run this as root (sudo universe-config …)"
-      }
-
-      get_env() {
-        local line
-        line=$(grep -m1 "^$1=" "$ENV_FILE" 2>/dev/null || true)
-        line=${line#*=}
-        line=${line#\"}
-        line=${line%\"}
-        printf '%s' "$line"
-      }
-
-      # Values are stored double-quoted (systemd's EnvironmentFile strips the quotes), so they can't contain quotes,
-      # backslashes or line breaks. Checked for every value BEFORE anything is written.
-      check_value() {
-        [[ $2 != *$'\n'* && $2 != *'"'* && $2 != *\\* ]] || die "$1 can't contain quotes, backslashes or line breaks"
-      }
-
-      # set_env KEY VALUE (the value has passed check_value)
-      set_env() {
-        local key=$1 value=$2 tmp
-        tmp=$(mktemp "$CONF/.env.XXXXXX")
-        grep -v "^$key=" "$ENV_FILE" >"$tmp" 2>/dev/null || true
-        printf '%s="%s"\n' "$key" "$value" >>"$tmp"
-        chmod 640 "$tmp"
-        chown "root:$APP_USER" "$tmp" 2>/dev/null || true
-        mv -f "$tmp" "$ENV_FILE"
-      }
-
-      healthy() {
-        local i
-        for ((i = 0; i < ${UNIVERSE_HEALTH_TRIES:-30}; i++)); do
-          if curl -fsS --max-time 3 "$HEALTH_URL" 2>/dev/null | grep -q '"ok":true'; then
-            return 0
-          fi
-          sleep 2
-        done
-        return 1
-      }
-
-      # Restarts the app with the new settings; if it doesn't come back, the previous settings are restored.
-      apply_env_change() {
-        local backup=$1
-        if [[ ! -e $ROOT/current ]]; then
-          rm -f "$backup"
-          echo "Saved. (The app isn't deployed yet; it will use this when it starts.)"
-          return 0
-        fi
-        "$SYSTEMCTL" restart universe || true
-        if healthy; then
-          rm -f "$backup"
-          echo "Saved, and the app restarted fine."
-        else
-          mv -f "$backup" "$ENV_FILE"
-          "$SYSTEMCTL" restart universe || true
-          echo "The app didn't start with that setting, so the previous settings are back. Its log said:" >&2
-          journalctl -u universe -n 15 --no-pager 2>/dev/null | tail -n 15 >&2 || true
-          exit 1
-        fi
-      }
-
-      backup_env() {
-        local b
-        b=$(mktemp "$CONF/.env.bak.XXXXXX")
-        cp -p "$ENV_FILE" "$b"
-        printf '%s' "$b"
-      }
-
-      render_caddy() {
-        local domain tmp
-        domain=$(cat "$CONF/domain" 2>/dev/null || true)
-        tmp=$(mktemp)
-        if [[ -n $domain ]]; then
-          sed "s/__DOMAIN__/$domain/g" "$CONF/Caddyfile.template" >"$tmp"
-        else
-          printf ':80 {\n\trespond "UniVerse is installed. Next step: universe-config domain <your-address>" 200\n}\n' >"$tmp"
-        fi
-        if command -v caddy >/dev/null 2>&1 && ! caddy validate --config "$tmp" --adapter caddyfile >/dev/null 2>&1; then
-          caddy validate --config "$tmp" --adapter caddyfile >&2 || true
-          rm -f "$tmp"
-          die "the generated Caddy config is invalid; nothing was changed"
-        fi
-        install -m 0644 "$tmp" "$CADDYFILE"
-        rm -f "$tmp"
-        "$SYSTEMCTL" reload caddy 2>/dev/null || "$SYSTEMCTL" restart caddy
-      }
-
-      cmd=${1:-help}
-      shift || true
-
-      case $cmd in
-        status)
-          domain=$(cat "$CONF/domain" 2>/dev/null || true)
-          live=$(cat "$STATE/live-sha" 2>/dev/null || true)
-          failed=$(cat "$STATE/failed-sha" 2>/dev/null || true)
-          echo "Address:   ${domain:+https://$domain}${domain:-not set yet (universe-config domain <name>)}"
-          echo "Live:      ${live:+commit ${live:0:12}}${live:-nothing deployed yet}"
-          [[ -n $failed ]] && echo "Skipped:   commit ${failed:0:12} failed to build or start (see $STATE/last-build.log / last-crash.log)"
-          if curl -fsS --max-time 3 "$HEALTH_URL" 2>/dev/null | grep -q '"ok":true'; then echo "App:       running"; else echo "App:       not answering"; fi
-          staff=$(get_env STAFF_EMAILS)
-          echo "Staff:     ${staff:-none yet (universe-config admin <your-email>)}"
-          if [[ -n $(get_env RESEND_API_KEY) ]]; then echo "Email:     on, from $(get_env MAIL_FROM)"; else echo "Email:     off (sign-up is closed until: universe-config email …)"; fi
-          echo "Data:      $(du -sh "$STATE" 2>/dev/null | cut -f1) in $STATE ($(df -h "$STATE" | awk 'NR==2 {print $4}') free)"
-          echo "Deploy key (GitHub → repo → Settings → Deploy keys):"
-          echo "  $(cat "$CONF/deploy_key.pub" 2>/dev/null || echo 'missing')"
-          ;;
-        domain)
-          need_root
-          name=${1:-}
-          name=${name#https://}
-          name=${name#http://}
-          name=${name%%/*}
-          [[ $name =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,63}$ ]] || die "usage: universe-config domain <name>, e.g. 129-146-12-34.sslip.io or yourdomain.me"
-          printf '%s\n' "${name,,}" >"$CONF/domain"
-          render_caddy
-          echo "The app will be at https://${name,,} (the first visit can take a minute while the HTTPS certificate is issued)."
-          echo "The name must already point at this server's public IP."
-          ;;
-        admin)
-          need_root
-          email=${1:-}
-          role=${2:-admin}
-          email=${email,,}
-          [[ $email =~ ^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$ ]] || die "usage: universe-config admin <email> [moderator]"
-          [[ $role == admin || $role == moderator ]] || die "the role must be admin or moderator"
-          current=$(get_env STAFF_EMAILS)
-          next=""
-          IFS=',' read -ra entries <<<"$current"
-          for e in "${entries[@]}"; do
-            e=${e// /}
-            [[ -z $e || ${e%%:*} == "$email" ]] && continue
-            next+="${next:+,}$e"
-          done
-          next+="${next:+,}$email:$role"
-          check_value STAFF_EMAILS "$next"
-          b=$(backup_env)
-          set_env STAFF_EMAILS "$next"
-          apply_env_change "$b"
-          echo "Staff now: $next"
-          ;;
-        email)
-          need_root
-          key=${1:-}
-          from=${2:-}
-          [[ $key == re_* ]] || die 'usage: universe-config email <resend-api-key> "UniVerse <login@yourdomain.me>" (Resend keys start with re_)'
-          [[ $from == *@* ]] || die 'give the sender too, e.g. "UniVerse <login@yourdomain.me>" (it must be on a domain you verified in Resend)'
-          check_value RESEND_API_KEY "$key"
-          check_value MAIL_FROM "$from"
-          b=$(backup_env)
-          set_env RESEND_API_KEY "$key"
-          set_env MAIL_FROM "$from"
-          apply_env_change "$b"
-          echo "Sign-in emails will come from: $from"
-          ;;
-        repo)
-          need_root
-          url=${1:-}
-          branch=${2:-main}
-          [[ -n $url ]] || die "usage: universe-config repo git@github.com:<you>/<repo>.git [branch]"
-          printf 'REPO_URL="%s"\nBRANCH="%s"\n' "$url" "$branch" >"$CONF/deploy.conf"
-          echo "Will deploy $url ($branch)."
-          ;;
-        deploy-key)
-          echo "Add this on GitHub: your repo → Settings → Deploy keys → Add deploy key (read-only is enough):"
-          echo
-          cat "$CONF/deploy_key.pub"
-          ;;
-        deploy)
-          need_root
-          "$BIN_DIR/universe-deploy" --force
-          ;;
-        logs)
-          journalctl -u universe -n "${1:-80}" --no-pager
-          ;;
-        backup)
-          need_root
-          "$BIN_DIR/universe-backup"
-          ;;
-        caddy-reload)
-          need_root
-          render_caddy
-          ;;
-        help | -h | --help)
-          usage
-          ;;
-        *)
-          usage
-          exit 1
-          ;;
-      esac
+      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
+      Wstr/HBNtr89W3aXDAEqNvb+B6h5/vfNHwAA
   - path: /usr/local/bin/universe-deploy
     permissions: '0755'
+    encoding: gz+b64
     content: |
-      #!/usr/bin/env bash
-      # universe-deploy — keeps this server on the newest commit of the app's GitHub branch.
-      #
-      # universe-deploy.timer runs it every 2 minutes. When the branch has a new commit, it builds that commit into its own
-      # release folder, points /opt/universe/current at it, restarts the app and waits for it to answer. A build that fails,
-      # or an app that doesn't come up, is never left live: the previous release is put back and the broken commit is
-      # skipped until a newer one arrives. The database and uploads live outside the releases (/var/lib/universe), so a
-      # deploy never touches your data.
-      #
-      #   universe-deploy            deploy if there is something new
-      #   universe-deploy --force    rebuild and redeploy the newest commit, even if it is live already or failed before
-      set -Eeuo pipefail
-      umask 022
-
-      ROOT=${UNIVERSE_ROOT:-/opt/universe}
-      STATE=${UNIVERSE_STATE:-/var/lib/universe}
-      CONF=${UNIVERSE_CONF:-/etc/universe}
-      APP_USER=${UNIVERSE_USER:-universe}
-      SYSTEMCTL=${UNIVERSE_SYSTEMCTL:-systemctl}
-      HEALTH_URL=${UNIVERSE_HEALTH_URL:-http://127.0.0.1:4000/api/health}
-      BIN_DIR=${UNIVERSE_BIN_DIR:-/usr/local/bin}
-      UNIT_DIR=${UNIVERSE_UNIT_DIR:-/etc/systemd/system}
-      HEALTH_TRIES=${UNIVERSE_HEALTH_TRIES:-45}
-      KEEP_RELEASES=3
-
-      REPO=$ROOT/repo
-      RELEASES=$ROOT/releases
-      CURRENT=$ROOT/current
-
-      log() { printf '[%s] %s\n' "$(date -u +%FT%TZ)" "$*"; }
-
-      if [[ ! -f $CONF/deploy.conf ]]; then
-        log "missing $CONF/deploy.conf"
-        exit 1
-      fi
-      # shellcheck source=/dev/null
-      source "$CONF/deploy.conf" # REPO_URL, BRANCH
-      : "${REPO_URL:?REPO_URL is not set in $CONF/deploy.conf}"
-      BRANCH=${BRANCH:-main}
-
-      export GIT_SSH_COMMAND="ssh -i $CONF/deploy_key -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$CONF/known_hosts"
-      export GIT_TERMINAL_PROMPT=0
-
-      mkdir -p "$RELEASES" "$STATE"
-      exec 9>"$STATE/deploy.lock"
-      if ! flock -n 9; then
-        log "a deploy is already running"
-        exit 0
-      fi
-
-      FORCE=0
-      [[ ${1:-} == --force ]] && FORCE=1
-
-      # ───────────────────────────── fetch ─────────────────────────────
-
-      if [[ ! -d $REPO/.git ]]; then
-        rm -rf "$REPO"
-        if ! git clone --quiet --no-checkout "$REPO_URL" "$REPO" 2>"$STATE/git-error.log"; then
-          rm -rf "$REPO"
-          log "can't reach $REPO_URL yet: add this server's deploy key on GitHub (run: universe-config deploy-key)"
-          exit 0
-        fi
-      fi
-      git -C "$REPO" remote set-url origin "$REPO_URL"
-      if ! git -C "$REPO" fetch --quiet --prune origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH" 2>"$STATE/git-error.log"; then
-        log "fetch failed: $(tail -n 1 "$STATE/git-error.log")"
-        exit 0
-      fi
-
-      SHA=$(git -C "$REPO" rev-parse "refs/remotes/origin/$BRANCH")
-      SHORT=${SHA:0:12}
-      LIVE=$(cat "$STATE/live-sha" 2>/dev/null || true)
-      FAILED=$(cat "$STATE/failed-sha" 2>/dev/null || true)
-      if ((!FORCE)); then
-        [[ $SHA == "$LIVE" ]] && exit 0
-        # a broken commit is not rebuilt every 2 minutes: push a fix (or run universe-deploy --force)
-        [[ $SHA == "$FAILED" ]] && exit 0
-      fi
-
-      # ───────────────────────────── build ─────────────────────────────
-
-      NEW=$RELEASES/$SHORT
-      NODE_VERSION=$(node -v)
-      log "deploying $SHORT: $(git -C "$REPO" log -1 --format=%s "$SHA" | cut -c1-80)"
-      rm -rf "$NEW"
-      mkdir -p "$NEW"
-      git -C "$REPO" archive "$SHA" | tar -x -C "$NEW"
-      chown -R "$APP_USER:$APP_USER" "$NEW"
-
-      as_app() {
-        runuser -u "$APP_USER" -- env HOME="$STATE/home" npm_config_cache="$STATE/npm-cache" npm_config_update_notifier=false "$@"
-      }
-
-      # Reuses the live release's node_modules when the lockfile and Node version are unchanged (a deploy then takes
-      # seconds); otherwise a clean `npm ci`.
-      install_deps() {
-        local part=$1
-        if [[ -d $CURRENT/$part/node_modules && -f $CURRENT/.node-version ]] &&
-          [[ $(cat "$CURRENT/.node-version") == "$NODE_VERSION" ]] &&
-          cmp -s "$CURRENT/$part/package-lock.json" "$NEW/$part/package-lock.json"; then
-          cp -a "$CURRENT/$part/node_modules" "$NEW/$part/node_modules"
-        else
-          (cd "$NEW/$part" && as_app npm ci --include=dev --no-audit --no-fund)
-        fi
-      }
-
-      build() {
-        install_deps server || return 1
-        install_deps client || return 1
-        (cd "$NEW/client" && as_app ./node_modules/.bin/vite build) || return 1
-        [[ -f $NEW/client/dist/index.html ]] || return 1
-        # keep the previous release's own hashed files too (one generation), so a tab opened before this deploy can still
-        # lazy-load its pages
-        (cd "$NEW/client/dist/assets" && find . -maxdepth 1 -type f -printf '%f\n') >"$NEW/client/.own-assets"
-        if [[ -f $CURRENT/client/.own-assets ]]; then
-          local f
-          while IFS= read -r f; do
-            if [[ -n $f && ! -e $NEW/client/dist/assets/$f ]]; then
-              cp -a "$CURRENT/client/dist/assets/$f" "$NEW/client/dist/assets/$f" || true
-            fi
-          done <"$CURRENT/client/.own-assets"
-        fi
-        echo "$NODE_VERSION" >"$NEW/.node-version"
-      }
-
-      if ! build >"$STATE/last-build.log" 2>&1; then
-        echo "$SHA" >"$STATE/failed-sha"
-        rm -rf "$NEW"
-        log "build of $SHORT failed; still serving ${LIVE:0:12}. Details: $STATE/last-build.log"
-        exit 1
-      fi
-
-      # ───────────────────────────── switch + check ─────────────────────────────
-
-      switch_to() {
-        ln -sfn "$1" "$CURRENT.next"
-        mv -Tf "$CURRENT.next" "$CURRENT"
-      }
-
-      healthy() {
-        local i
-        for ((i = 0; i < HEALTH_TRIES; i++)); do
-          if curl -fsS --max-time 3 "$HEALTH_URL" 2>/dev/null | grep -q '"ok":true'; then
-            return 0
-          fi
-          sleep 2
-        done
-        return 1
-      }
-
-      PREV=$(readlink -f "$CURRENT" 2>/dev/null || true)
-      switch_to "$NEW"
-      "$SYSTEMCTL" enable universe >/dev/null 2>&1 || true
-      "$SYSTEMCTL" restart universe || true
-
-      if ! healthy; then
-        journalctl -u universe -n 120 --no-pager >"$STATE/last-crash.log" 2>&1 || true
-        echo "$SHA" >"$STATE/failed-sha"
-        if [[ -n $PREV && -d $PREV && $PREV != "$NEW" ]]; then
-          switch_to "$PREV"
-          "$SYSTEMCTL" restart universe || true
-          log "$SHORT didn't start; put ${PREV##*/} back. Details: $STATE/last-crash.log"
-        else
-          log "$SHORT didn't start. Details: $STATE/last-crash.log"
-        fi
-        exit 1
-      fi
-
-      echo "$SHA" >"$STATE/live-sha"
-      rm -f "$STATE/failed-sha"
-      log "live: $SHORT"
-
-      # ───────────────────────────── after a good deploy ─────────────────────────────
-
-      # The server's own tooling (these scripts, the systemd units, the Caddy template) ships in the repo under deploy/vm,
-      # so improving it is just another push. Files are swapped in by rename, so a running copy of this script is unaffected.
-      refresh_tooling() {
-        local src=$NEW/deploy/vm f name units_changed=0
-        [[ -d $src ]] || return 0
-        for f in "$src"/bin/*; do
-          [[ -f $f ]] || continue
-          name=${f##*/}
-          if ! cmp -s "$f" "$BIN_DIR/$name"; then
-            install -m 0755 "$f" "$BIN_DIR/.$name.new"
-            mv -f "$BIN_DIR/.$name.new" "$BIN_DIR/$name"
-          fi
-        done
-        for f in "$src"/systemd/*; do
-          [[ -f $f ]] || continue
-          name=${f##*/}
-          if ! cmp -s "$f" "$UNIT_DIR/$name"; then
-            install -m 0644 "$f" "$UNIT_DIR/$name"
-            units_changed=1
-          fi
-        done
-        if ((units_changed)); then
-          "$SYSTEMCTL" daemon-reload || true
-        fi
-        if [[ -f $src/Caddyfile.template ]] && ! cmp -s "$src/Caddyfile.template" "$CONF/Caddyfile.template"; then
-          install -m 0644 "$src/Caddyfile.template" "$CONF/Caddyfile.template"
-          "$BIN_DIR/universe-config" caddy-reload >/dev/null 2>&1 || log "couldn't apply the new Caddy template (run: universe-config caddy-reload)"
-        fi
-      }
-
-      # Keeps the newest $KEEP_RELEASES release folders (always including the live one).
-      prune_releases() {
-        local live d n=0
-        live=$(readlink -f "$CURRENT")
-        while IFS= read -r d; do
-          [[ -n $d ]] || continue
-          n=$((n + 1))
-          [[ $d == "$live" ]] && continue
-          if ((n > KEEP_RELEASES)); then
-            rm -rf "$d"
-          fi
-        done < <(find "$RELEASES" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' | sort -rn | cut -d' ' -f2-)
-      }
-
-      refresh_tooling || log "tooling refresh failed (the app itself is live)"
-      prune_releases || true
+      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
+      P2cLazBP66+h3XDNTU2K/Qcc5znmIyAAAA==
   - path: /etc/systemd/system/universe-backup.service
     permissions: '0644'
+    encoding: gz+b64
     content: |
-      [Unit]
-      Description=Back up the UniVerse database
-
-      [Service]
-      Type=oneshot
-      ExecStart=/usr/local/bin/universe-backup
+      H4sIAAAAAAACAxXMwQnDMAwAwL+m8ALFE/hT2gnS9BPykFVBRIJsJDmk25feALfMKrHCg51MekjT
+      ckfa0+gpNk6zypvNOX0wsKIzwDKxnUK8wuvbuTRl31rA82KaAi1KHm75aIRHrqJ5qJz/4laR9tHh
+      BwWmX0VyAAAA
   - path: /etc/systemd/system/universe-backup.timer
     permissions: '0644'
+    encoding: gz+b64
     content: |
-      [Unit]
-      Description=Back up the UniVerse database every night
-
-      [Timer]
-      OnCalendar=*-*-* 08:30:00 UTC
-      Persistent=true
-      Unit=universe-backup.service
-
-      [Install]
-      WantedBy=timers.target
+      H4sIAAAAAAACAxXNsQqDQAwA0D1fcbOgCF2KcIt26dQO2g7iEM+goTaVXE7w74s/8F7fCdsAN4pB
+      eTP+ia8xfFzanC3kOuEXaSQ3oeGIkRztpIcTnhcD6Fv+kg7wkAZXkgnVZ3mWZ668VpeyKkvXtQ08
+      SSNHIzFvmgjO0ifh/ZTzEcMnbUUk3TkQQH+XaLiuA7xRjKb68HYusTDUmQz+O503E7MAAAA=
   - path: /etc/systemd/system/universe-deploy.service
     permissions: '0644'
+    encoding: gz+b64
     content: |
-      [Unit]
-      Description=Deploy the newest UniVerse commit from GitHub
-      After=network-online.target
-      Wants=network-online.target
-
-      [Service]
-      Type=oneshot
-      ExecStart=/usr/local/bin/universe-deploy
-      TimeoutStartSec=30min
+      H4sIAAAAAAACA3XOMQ6CQBBG4X5PsRdATKy3MMFoD2hBKHD91YnsDJkdRG9vtLd+r/i6lsl6VyFH
+      pclIOFSYRnl7u8MzFmTzLdMRmuGjpETmryrJ78kO89ltrwYNDFtEH4XwSIyVDXqDudPAlv8019XQ
+      J0X0rnlPCMLIdzG3eyHWNqiFcs5ajhKHsTwTlzPT84soLj+fayhBZvu9NWLYrBOx+wBDwEmJ0AAA
+      AA==
   - path: /etc/systemd/system/universe-deploy.timer
     permissions: '0644'
+    encoding: gz+b64
     content: |
-      [Unit]
-      Description=Check GitHub for a new UniVerse commit every 2 minutes
-
-      [Timer]
-      OnBootSec=1min
-      OnUnitInactiveSec=2min
-      Unit=universe-deploy.service
-
-      [Install]
-      WantedBy=timers.target
+      H4sIAAAAAAACAxXNOw7CMBBF0X5WMRsAifRpAhKkouBXRCmMecCIeIzsiVF2j9ye4t7homIj7ZB9
+      kq9J1Hb7hv/wXuww3/kZEztW/PiickXKYB9DEGMUpIUbDqKzIRMNZwlIIx21i9FO8O0miNJR66JX
+      500KKjeVK7azSqnN1QPfKS7rjFTEg2joNZubppFuTg2Pbmmt1vPaXHrB6A9Nlzv5uAAAAA==
   - path: /etc/systemd/system/universe.service
     permissions: '0644'
+    encoding: gz+b64
     content: |
-      [Unit]
-      Description=UniVerse (API + realtime)
-      After=network-online.target
-      Wants=network-online.target
-      # nothing to run until the first deploy has created a release
-      ConditionPathExists=/opt/universe/current/server/src/index.ts
-
-      [Service]
-      User=universe
-      Group=universe
-      EnvironmentFile=/etc/universe/universe.env
-      WorkingDirectory=/opt/universe/current/server
-      ExecStart=/opt/universe/current/server/node_modules/.bin/tsx src/index.ts
-      Restart=always
-      RestartSec=3
-      TimeoutStopSec=10
-      NoNewPrivileges=true
-      PrivateTmp=true
-      ProtectSystem=full
-      ProtectHome=true
-
-      [Install]
-      WantedBy=multi-user.target
+      H4sIAAAAAAACA32RT28TQQzF7/MpRuICQs2COO+h0AC9VBHb0EMUoWH2JbE6a69szyb59ihFS8Wh
+      vfn57896mzWTb8MNLCuNTsLtmukn1BDfXq9u4/uoSMVpwLtwvXNoy/Cj6OOVcCHGwpPu4eEhsdsL
+      tTeRxQ/E++gStXKs7FSiHxB3pOaxx1jkHA/JYlYkRx9TVBQkQ/gi3NOFbJX8sDyRubWNjN5UpukC
+      2uSqCvbGoBO0Mc0NcY/Twi2ETQedKGMb1gZt56HwTaWOz3LJE6nwAPavVNA28Px8YQ4W4Ck8iD4S
+      729IkV30/CpNWJ6QO0/qr0Oz9Pg1SF8LrFn8Jm7cTvG/V37Anvakckznf7JDbj+Fexog1TuX8ZL4
+      +CHcyR2OK6WJCvaw1rUiXHRy3A/jrMWRvTubY2h3tZQ59V0G/O0Jm1s2T6Vsn0xG//ncDrU4XVWD
+      zh7/AaJykLtJAgAA
   - path: /usr/local/sbin/universe-bootstrap
     permissions: '0755'
+    encoding: gz+b64
     content: |
-      #!/usr/bin/env bash
-      # First-boot setup of a fresh Ubuntu 22.04 / 24.04 server for UniVerse. cloud-init runs it once; it is safe to re-run.
-      # Installs Node 22 + Caddy (automatic HTTPS), creates the `universe` user and folders, generates the app's secrets and
-      # the GitHub deploy key on the server (they never leave it), opens only ports 22 / 80 / 443, and starts the deploy +
-      # backup timers. The first deploy happens on its own once the deploy key is added on GitHub.
-      set -Eeuo pipefail
-      export DEBIAN_FRONTEND=noninteractive
-      log() { echo "[universe-bootstrap] $*"; }
-
-      # 1. swap: a 1 GB server needs it to build the web app
-      if ! swapon --show=NAME --noheadings | grep -q '^/swapfile$'; then
-        if [[ ! -f /swapfile ]]; then
-          fallocate -l 2G /swapfile
-          chmod 600 /swapfile
-          mkswap /swapfile >/dev/null
-        fi
-        swapon /swapfile
-        grep -q '^/swapfile ' /etc/fstab || echo '/swapfile none swap sw 0 0' >>/etc/fstab
-      fi
-
-      # 2. packages
-      log "installing packages"
-      apt-get update -q
-      apt-get install -y -q ca-certificates curl gnupg git sqlite3 build-essential python3 ufw openssl \
-        debian-keyring debian-archive-keyring apt-transport-https
-      if ! command -v node >/dev/null 2>&1 || [[ $(node -v) != v22.* ]]; then
-        curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
-        apt-get install -y -q nodejs
-      fi
-      if ! command -v caddy >/dev/null 2>&1; then
-        curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor --yes -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-        curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' >/etc/apt/sources.list.d/caddy-stable.list
-        apt-get update -q
-        apt-get install -y -q caddy
-      fi
-
-      # 3. app user + folders (the data folder is the only place the app writes user data)
-      id universe >/dev/null 2>&1 || useradd --system --home-dir /var/lib/universe/home --shell /usr/sbin/nologin universe
-      install -d -m 0755 /opt/universe /opt/universe/releases
-      install -d -o universe -g universe -m 0750 /var/lib/universe /var/lib/universe/uploads /var/lib/universe/home /var/lib/universe/npm-cache
-      install -d -m 0700 /var/lib/universe/backups
-      install -d -g universe -m 0750 /etc/universe
-
-      # 4. the app's settings + secrets (generated here; they never leave this server)
-      if [[ ! -f /etc/universe/universe.env ]]; then
-        log "generating secrets"
-        umask 027
-        cat >/etc/universe/universe.env <<ENV
-      NODE_ENV="production"
-      PORT="4000"
-      TRUST_PROXY="1"
-      DB_PATH="/var/lib/universe/universe.db"
-      UPLOADS_DIR="/var/lib/universe/uploads"
-      BUZZ_ALIAS_SECRET="$(openssl rand -hex 32)"
-      CURSOR_SECRET="$(openssl rand -hex 32)"
-      NODE_OPTIONS="--max-old-space-size=512"
-      ENV
-        umask 022
-      fi
-      chown root:universe /etc/universe/universe.env
-      chmod 640 /etc/universe/universe.env
-
-      # 5. the deploy key: read-only access to the GitHub repo, added by you on GitHub
-      if [[ ! -f /etc/universe/deploy_key ]]; then
-        ssh-keygen -q -t ed25519 -N '' -C "universe-server@$(hostname)" -f /etc/universe/deploy_key
-      fi
-      chmod 600 /etc/universe/deploy_key
-      chmod 644 /etc/universe/deploy_key.pub
-
-      # 6. firewall: SSH + web only (the app's own port 4000 is never exposed)
-      if [[ -f /etc/iptables/rules.v4 ]] && grep -q 'REJECT' /etc/iptables/rules.v4; then
-        # Oracle Cloud's Ubuntu images ship their own iptables rules (only SSH open, everything else rejected) and Oracle
-        # warns against enabling ufw on top of them. Open 80/443 in those rules instead and save them.
-        for port in 80 443; do
-          iptables -C INPUT -p tcp -m state --state NEW --dport "$port" -j ACCEPT 2>/dev/null ||
-            iptables -I INPUT -p tcp -m state --state NEW --dport "$port" -j ACCEPT
-        done
-        netfilter-persistent save >/dev/null 2>&1 || iptables-save >/etc/iptables/rules.v4
-      else
-        ufw allow OpenSSH >/dev/null
-        ufw allow 80/tcp >/dev/null
-        ufw allow 443/tcp >/dev/null
-        ufw --force enable >/dev/null
-      fi
-
-      # 7. services
-      systemctl daemon-reload
-      systemctl enable --now universe-deploy.timer universe-backup.timer
-      /usr/local/bin/universe-config caddy-reload || true
-
-      log "done. Next: add the deploy key on GitHub (universe-config deploy-key); the app deploys itself within 2 minutes."
+      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
 runcmd:
   - [/usr/local/sbin/universe-bootstrap]
