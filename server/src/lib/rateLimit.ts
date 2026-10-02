@@ -16,7 +16,9 @@ export type RateAction =
   | 'message_request' | 'group_create' | 'listing_create' | 'roommate_edit' | 'event_create' | 'course_create'
   | 'follow' | 'report' | 'block' | 'search' | 'profile_edit' | 'upload' | 'unmask'
   // hardening additions: edits / adds / offers must not bypass the create limits
-  | 'group_add' | 'group_rename' | 'listing_edit' | 'offer';
+  | 'group_add' | 'group_rename' | 'listing_edit' | 'offer'
+  // D9: setting / changing / removing a password and toggling two-factor
+  | 'password_change';
 
 interface Window {
   ms: number;
@@ -51,6 +53,7 @@ const LIMITS_TABLE: Record<RateAction, Window[]> = {
   group_rename: [{ ms: HOUR, max: 10, maxNew: 5 }],
   listing_edit: [{ ms: DAY, max: 30, maxNew: 10 }],
   offer: [{ ms: DAY, max: 20, maxNew: 10 }],
+  password_change: [{ ms: HOUR, max: 10 }, { ms: DAY, max: 30 }],
 };
 
 /** Org accounts use the established column ×2 for posts/events only. */

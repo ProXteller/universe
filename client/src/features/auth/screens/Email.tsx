@@ -131,13 +131,25 @@ export function EmailScreen() {
           <Button type="submit" form="uv-email-form" size="lg" fullWidth disabled={!parses} loading={busy} rightIcon={ArrowRight}>
             Send code
           </Button>
-          <button type="button" onClick={() => setHelpOpen(true)} className="press mx-auto min-h-11 rounded-sm px-2 type-label-sm text-ink-2">
-            My school email isn't accepted
-          </button>
+          <div className="flex flex-wrap items-center justify-center gap-x-4">
+            <button
+              type="button"
+              onClick={() => {
+                if (parses) storeEmail(trimmed);
+                navigate(routes.welcomeStep('password'));
+              }}
+              className="press min-h-11 rounded-sm px-2 type-label-sm text-accent-ink"
+            >
+              Sign in with password
+            </button>
+            <button type="button" onClick={() => setHelpOpen(true)} className="press min-h-11 rounded-sm px-2 type-label-sm text-ink-2">
+              My school email isn't accepted
+            </button>
+          </div>
         </StepFooter>
       }
     >
-      <StepTitle title="What's your university email?" sub="We'll send a 6-digit code. No password, ever." />
+      <StepTitle title="What's your university email?" sub="We'll send a 6-digit code. No password needed." />
       {notice ? <InlineError>{notice}</InlineError> : null}
       <form id="uv-email-form" onSubmit={submit} className="flex flex-col gap-3" noValidate>
         <Input

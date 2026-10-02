@@ -96,7 +96,7 @@ export function WelcomeScreen() {
 
       <Sheet open={howOpen} onOpenChange={setHowOpen} title="How verification works">
         <p className="pb-2 type-body text-ink-2">
-          We email a 6-digit code to your university address. No passwords. We never post for you and we never contact anyone on your behalf.
+          We email a 6-digit code to your university address (or use a password, if you set one). We never post for you and we never contact anyone on your behalf.
         </p>
       </Sheet>
     </Screen>

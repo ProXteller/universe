@@ -98,7 +98,8 @@ Rules:
   - Success → the resource itself; lists → `{ items: T[], nextCursor: string | null }` (opaque cursor, `?cursor=&limit=`).
   - Error → `{ error: { code: string, message: string, details?: unknown } }` with a correct HTTP status.
   - Validation with zod through the foundation `validate()` helper. Every handler wrapped in `asyncHandler`.
-- Auth: passwordless. University email → 6-digit code → session cookie `uv_session` (httpOnly, sameSite=lax).
+- Auth: university email → 6-digit code → session cookie `uv_session` (httpOnly, sameSite=lax). Accounts are created
+  with a code only; an optional password and opt-in two-step sign-in were added later (DECISIONS D9).
   `requireAuth` populates `req.user`. Roles: `user | moderator | admin`. Account types: `student | org`.
 - Campus scoping: every user belongs to a `university`. Campus-scoped content stores `university_id`;
   feeds take `scope=campus|global` where it makes sense.

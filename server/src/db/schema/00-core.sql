@@ -100,6 +100,28 @@ CREATE TABLE IF NOT EXISTS otp_codes (
 );
 CREATE INDEX IF NOT EXISTS idx_otp_email ON otp_codes(email, created_at DESC);
 
+-- Optional password sign-in (DECISIONS D9). One row per user who set a password; no row = email-code only.
+-- password_hash is `scrypt$N$r$p$salt$hash` (base64url). two_factor = 1 → a password sign-in also needs an email code.
+CREATE TABLE IF NOT EXISTS user_passwords (
+  user_id         TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  password_hash   TEXT NOT NULL,
+  two_factor      INTEGER NOT NULL DEFAULT 0,
+  failed_attempts INTEGER NOT NULL DEFAULT 0,
+  locked_until    INTEGER,
+  set_at          INTEGER NOT NULL,
+  updated_at      INTEGER NOT NULL
+);
+
+-- The step between a correct password and the email code when two-factor is on (10-minute, single use).
+CREATE TABLE IF NOT EXISTS login_challenges (
+  id          TEXT PRIMARY KEY,
+  token_hash  TEXT NOT NULL UNIQUE,
+  user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  expires_at  INTEGER NOT NULL,
+  consumed_at INTEGER,
+  created_at  INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS signup_tokens (
   id            TEXT PRIMARY KEY,
   token_hash    TEXT NOT NULL UNIQUE,

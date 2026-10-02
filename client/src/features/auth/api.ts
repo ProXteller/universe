@@ -4,7 +4,8 @@
  */
 import type {
   AcceptGuidelinesRequest, AuthCompleteRequest, AuthCompleteResponse, AuthStartRequest, AuthStartResponse, AuthVerifyRequest,
-  AuthVerifyResponse, DomainLookupResponse, HandleAvailabilityResponse, InvitePreview, MeUser, UpdateMeRequest, WithModeration,
+  AuthVerifyResponse, DomainLookupResponse, HandleAvailabilityResponse, InvitePreview, MeUser, PasswordCodeRequest,
+  PasswordCodeResendResponse, PasswordLoginRequest, PasswordLoginResponse, UpdateMeRequest, WithModeration,
 } from '@shared/core';
 import { GUIDELINES_VERSION } from '@shared/core';
 import type { FollowManyRequest, FollowManyResponse, OnboardingSuggestions } from '@shared/auth';
@@ -21,6 +22,10 @@ export const authApi = {
   lookupDomain: (email: string) => api.get<DomainLookupResponse>('/auth/domain', { email }),
   start: (body: AuthStartRequest) => api.post<AuthStartResponse>('/auth/start', body),
   verify: (body: AuthVerifyRequest) => api.post<AuthVerifyResponse>('/auth/verify', body),
+  /** D9: optional password sign-in, then (two-factor on) the emailed code. */
+  passwordLogin: (body: PasswordLoginRequest) => api.post<PasswordLoginResponse>('/auth/password/login', body),
+  passwordVerify: (body: PasswordCodeRequest) => api.post<AuthVerifyResponse>('/auth/password/verify', body),
+  passwordResend: (challengeToken: string) => api.post<PasswordCodeResendResponse>('/auth/password/resend', { challengeToken }),
   handleAvailable: (handle: string) => api.get<HandleAvailabilityResponse>('/auth/handle-available', { handle }),
   complete: (body: AuthCompleteRequest) => api.post<AuthCompleteResponse>('/auth/complete', body),
   invitePreview: (code: string) => api.get<InvitePreview>(`/invites/${encodeURIComponent(code)}`),

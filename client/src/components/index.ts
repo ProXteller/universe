@@ -44,3 +44,5 @@ export { ShareSheet, ShareHost } from './ShareSheet';
 export type { ShareSheetProps } from './ShareSheet';
 export { ModerationHost } from './ModerationHost';
 export { SanctionGate } from './SanctionGate';
+export { PasswordInput } from './PasswordInput';
+export type { PasswordInputProps } from './PasswordInput';

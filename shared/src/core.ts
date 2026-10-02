@@ -367,6 +367,67 @@ export interface AuthCompleteResponse {
   user: MeUser;
 }
 
+/* ── optional password sign-in (DECISIONS D9) ── */
+
+/** Password length bounds (characters). */
+export const PASSWORD_MIN = 8;
+export const PASSWORD_MAX = 128;
+
+export interface PasswordLoginRequest {
+  email: string;
+  password: string;
+}
+/**
+ * `signed_in` → session cookie set. `code_required` → two-factor is on: a 6-digit code was emailed; finish with
+ * POST /auth/password/verify. An unknown email, an account without a password and a wrong password all answer the
+ * same 401 `password_invalid`.
+ */
+export type PasswordLoginResponse =
+  | { status: 'signed_in'; user: MeUser }
+  | {
+      status: 'code_required';
+      challengeToken: string;
+      email: string;
+      expiresAt: EpochMs;
+      resendAvailableAt: EpochMs;
+      /** Non-production with no mail provider only. */
+      devCode?: string;
+    };
+export interface PasswordCodeRequest {
+  challengeToken: string;
+  code: string;
+}
+export interface PasswordCodeResendRequest {
+  challengeToken: string;
+}
+export interface PasswordCodeResendResponse {
+  expiresAt: EpochMs;
+  resendAvailableAt: EpochMs;
+  devCode?: string;
+}
+
+/** GET /me/security — never contains the hash. */
+export interface SecuritySettings {
+  hasPassword: boolean;
+  /** Password sign-ins also need an emailed code. Only possible with a password. */
+  twoFactor: boolean;
+  passwordSetAt: EpochMs | null;
+}
+/** PUT /me/password — `currentPassword` is required when a password already exists. */
+export interface SetPasswordRequest {
+  currentPassword?: string;
+  newPassword: string;
+}
+/** PUT /me/two-factor */
+export interface TwoFactorRequest {
+  enabled: boolean;
+  currentPassword: string;
+}
+/** DELETE /me/password — back to email-code sign-in only (two-factor turns off with it). */
+export interface RemovePasswordRequest {
+  currentPassword: string;
+}
+
 export interface HandleAvailabilityResponse {
   handle: string;
   available: boolean;

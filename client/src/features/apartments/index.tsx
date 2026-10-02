@@ -1,7 +1,7 @@
 /**
  * `apartments` slice entry (SPEC §4.6, R5): `ApartmentsPage`, `NotificationsPage`, `SettingsRoutes`, `LegalPage` —
  * names and prop types frozen. Routes (SPEC §4.5): `/apartments` · `/notifications` · `/settings`,
- * `/settings/notifications`, `/settings/privacy`, `/settings/blocked`, `/settings/invite`, `/settings/account-status`,
+ * `/settings/notifications`, `/settings/privacy`, `/settings/security` (D9), `/settings/blocked`, `/settings/invite`, `/settings/account-status`,
  * `/settings/buzz-anonymity`, `/settings/about` · `/legal/:doc` (public). No import-time side effects (R4).
  */
 import type { FC } from 'react';
@@ -17,6 +17,7 @@ import { BuzzAnonymityPage } from './settings/BuzzAnonymityPage';
 import { InvitePage } from './settings/InvitePage';
 import { NotificationSettingsPage } from './settings/NotificationSettingsPage';
 import { PrivacyPage } from './settings/PrivacyPage';
+import { SecurityPage } from './settings/SecurityPage';
 import { SettingsHome } from './settings/SettingsHome';
 
 export const ApartmentsPage: FC = () => <ApartmentsScreen />;
@@ -28,6 +29,7 @@ export const SettingsRoutes: FC = () => (
     <Route index element={<SettingsHome />} />
     <Route path="notifications" element={<NotificationSettingsPage />} />
     <Route path="privacy" element={<PrivacyPage />} />
+    <Route path="security" element={<SecurityPage />} />
     <Route path="blocked" element={<BlockedUsersPage />} />
     <Route path="invite" element={<InvitePage />} />
     <Route path="account-status" element={<AccountStatusPage />} />

@@ -91,3 +91,25 @@ Supersedes "only people/orgs you follow" (Constitution §0 1, SPEC §5.4 "nothin
 - The "New posts" pill (`/feed/new-count`) still counts followed authors only.
 - Seed: a deterministic "campus reach" pass gives the newest posts of two hero students Maya doesn't follow likes from
   across the campus, so the demo shows highlights (no rng draw — later seeds unchanged).
+
+## D9 — Optional password + two-step sign-in (owner request, Oct 2026)
+
+Amends Constitution §4 "Auth: passwordless" and SPEC §1 "Passwordless sign-up":
+- **Accounts are still created with a university email code only.** Nothing about sign-up changes, and the email-code
+  sign-in always keeps working for everyone — it is also the "forgot password" path (no reset links exist).
+- **Password (opt-in).** Settings → Password & sign-in can add, change or remove a password. Stored in
+  `user_passwords` (00-core) as scrypt (`N=16384, r=8, p=1`, 16-byte salt). Minimum 8 / maximum 128 characters;
+  a short common-password list, single repeated characters and anything containing the email's local part are refused
+  (422 `password_weak`). Changing or removing it needs the current password; a change signs every other session out.
+  Every change is audited (`password_set` / `password_changed` / `password_removed` / `two_factor_on|off`) and a
+  best-effort notice is emailed. Deleting the account deletes the password.
+- **Password sign-in.** `POST /api/auth/password/login`. Unknown address, no password set and a wrong password all
+  answer the same 401 `password_invalid` (one scrypt either way). 5 wrong passwords in a row lock *password* sign-in for
+  that account for 15 minutes (423 `password_locked`); email codes are never locked by this, so a stranger guessing can
+  only push the owner back to codes. The IP limiter on `/api/auth/*` (10/min) applies too.
+- **Two-step sign-in (opt-in, needs a password).** When on, a correct password returns `code_required` + a 10-minute
+  single-use challenge token and emails a normal sign-in code (all OTP limits apply); `POST /api/auth/password/verify`
+  finishes it, `/resend` sends a fresh code. A wrong password never sends a code.
+- What two-step protects: a leaked or guessed password alone is never enough. The email inbox remains the root of the
+  account (code sign-in), exactly as before.
+

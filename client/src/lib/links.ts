@@ -17,7 +17,7 @@ function qs(params: Record<string, string | number | boolean | null | undefined>
 const enc = (s: string) => encodeURIComponent(s);
 
 /** The canonical onboarding sub-paths of SPEC §4.5 (`/welcome/<step>`). */
-export type WelcomeStep = 'email' | 'code' | 'profile' | 'guidelines' | 'follow';
+export type WelcomeStep = 'email' | 'code' | 'password' | 'profile' | 'guidelines' | 'follow';
 
 export const routes = {
   welcome: (next?: string) => `/welcome${qs({ next })}`,

@@ -6,7 +6,8 @@
 import { useMutation, useQuery, type UseQueryResult } from '@tanstack/react-query';
 import type {
   AppealReceipt, Badges, BlockResult, BlockedUserRow, CreateAppealRequest, Id, InviteStats, MarkNotificationsReadRequest, Notification,
-  NotificationFilter, Paginated, SanctionNotice, UpdateSettingsRequest, UserSettings, WaitlistState,
+  NotificationFilter, Paginated, RemovePasswordRequest, SanctionNotice, SecuritySettings, SetPasswordRequest, TwoFactorRequest,
+  UpdateSettingsRequest, UserSettings, WaitlistState,
 } from '@shared/core';
 import { NOTIFICATION_FILTERS } from '@shared/core';
 import type { SurveyAnswerRequest, SurveyQuestionId, SurveySplit, SurveyState } from '@shared/apartments';
@@ -22,6 +23,7 @@ export const keys = {
   blocks: ['apartments', 'blocks'] as const,
   invite: ['apartments', 'invite'] as const,
   sanctions: ['apartments', 'sanctions'] as const,
+  security: ['apartments', 'security'] as const,
   /** Reserved foundation key (§4.4.5) — used verbatim. */
   notifications: (filter: NotificationFilter) => ['notifications', filter] as const,
 };
@@ -225,3 +227,22 @@ export function useAppeal() {
 export function deleteAccount(): Promise<void> {
   return api.delete<void>('/me', { confirm: 'DELETE' });
 }
+
+/* ------------------------------------------------------------------ password & two-factor (D9) */
+
+export function useSecurity(): UseQueryResult<SecuritySettings> {
+  return useQuery<SecuritySettings>({ queryKey: keys.security, queryFn: () => api.get<SecuritySettings>('/me/security') });
+}
+
+/** Every security mutation answers with the fresh `SecuritySettings`; it replaces the cached copy. */
+function useSecurityMutation<V>(fn: (vars: V) => Promise<SecuritySettings>) {
+  return useMutation<SecuritySettings, unknown, V>({
+    mutationFn: fn,
+    onSuccess: (next) => queryClient.setQueryData(keys.security, next),
+  });
+}
+
+export const useSetPassword = () => useSecurityMutation((body: SetPasswordRequest) => api.put<SecuritySettings>('/me/password', body));
+export const useRemovePassword = () =>
+  useSecurityMutation((body: RemovePasswordRequest) => api.delete<SecuritySettings>('/me/password', body));
+export const useSetTwoFactor = () => useSecurityMutation((body: TwoFactorRequest) => api.put<SecuritySettings>('/me/two-factor', body));

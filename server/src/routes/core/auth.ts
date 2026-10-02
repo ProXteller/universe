@@ -7,9 +7,11 @@ import { Router } from 'express';
 import { z } from 'zod';
 import type {
   AuthCompleteRequest, AuthCompleteResponse, AuthStartRequest, AuthStartResponse, AuthVerifyRequest, AuthVerifyResponse,
-  DomainLookupResponse, HandleAvailabilityResponse, Id, InvitePreview, ModerationContext,
+  DomainLookupResponse, EpochMs, HandleAvailabilityResponse, Id, InvitePreview, ModerationContext, PasswordCodeRequest,
+  PasswordCodeResendRequest, PasswordCodeResendResponse, PasswordLoginRequest, PasswordLoginResponse, RemovePasswordRequest,
+  SecuritySettings, SetPasswordRequest, TwoFactorRequest,
 } from '@shared/core';
-import { LIMITS, ORG_CATEGORIES } from '@shared/core';
+import { LIMITS, ORG_CATEGORIES, PASSWORD_MAX, PASSWORD_MIN } from '@shared/core';
 import { config } from '../../config';
 import { newId, prep, tx } from '../../db/index';
 import { requireAuth } from '../../middleware/auth';
@@ -22,8 +24,13 @@ import { log } from '../../lib/logger';
 import { getMailer, MAIL_UNAVAILABLE_MESSAGE, mailProviderConfigured } from '../../lib/mailer';
 import { commitModeration, moderateWrite } from '../../lib/moderation/index';
 import { consumeOtp, consumeSignupToken, issueOtp, issueSignupToken, readSignupToken } from '../../lib/otp';
+import {
+  assertPasswordAcceptable, burnPasswordCheck, checkPassword, consumeLoginChallenge, getPasswordRow, issueLoginChallenge,
+  readLoginChallenge, removePassword, securityOf, setPassword, setTwoFactor,
+} from '../../lib/passwords';
+import { enforceRateLimit } from '../../lib/rateLimit';
 import { revokeUserSockets } from '../../lib/realtime';
-import { clearSessionCookie, createSession, revokeSession, setSessionCookie } from '../../lib/sessions';
+import { clearSessionCookie, createSession, revokeOtherSessions, revokeSession, setSessionCookie } from '../../lib/sessions';
 import { APP_NAME } from '@shared/core';
 import {
   EMAIL_COPY, isValidEmail, lookupDomain, normalizeEmail, previewUniversityForEmail, resolveUniversityForEmail,
@@ -98,6 +105,48 @@ function inviterFor(code: string | null | undefined, exceptUserId?: Id): UserRow
   return row && row.id !== exceptUserId ? row : null;
 }
 
+/** Dev inbox: ONLY outside production AND only when no mail provider is configured. Never in production. */
+function devInbox(code: string): { devCode?: string } {
+  return config.env !== 'production' && !mailProviderConfigured() ? { devCode: code } : {};
+}
+
+/** Issues a sign-in code (all OTP limits apply) and emails it. 503 `mail_unavailable` when the mailer fails. */
+async function sendSignInCode(email: string, inviteCode: string | null): Promise<{ code: string; expiresAt: EpochMs; resendAvailableAt: EpochMs }> {
+  const otp = issueOtp(email, inviteCode);
+  try {
+    await getMailer().send(
+      email,
+      `${otp.code} is your ${APP_NAME} code`,
+      `Your ${APP_NAME} sign-in code is ${otp.code}. It expires in 10 minutes.\n\nIf you didn't ask for this, you can ignore this email.`,
+    );
+  } catch (err) {
+    if (err instanceof ApiError) throw err;
+    log.error('mailer failed', err);
+    throw new ApiError(503, 'mail_unavailable', MAIL_UNAVAILABLE_MESSAGE);
+  }
+  return otp;
+}
+
+/** Best-effort security notice ("your password changed"); never fails the request. */
+function notifySecurityChange(email: string, what: string): void {
+  void getMailer()
+    .send(
+      email,
+      `Your ${APP_NAME} sign-in settings changed`,
+      `${what}\n\nIf this wasn't you, sign in with an email code right away, then change your password in Settings → Password & sign-in.`,
+    )
+    .catch((err: unknown) => log.warn('security notice not sent', err));
+}
+
+/** Starts a session for an existing account (shared by code sign-in, password sign-in and the two-factor step). */
+function signIn(req: Parameters<Parameters<typeof asyncHandler>[0]>[0], res: Parameters<Parameters<typeof asyncHandler>[0]>[1], existing: UserRow, method: 'code' | 'password' | 'password_2fa'): UserRow {
+  const user = applyStaffBootstrap(existing);
+  const session = createSession(user.id, req.get('user-agent'));
+  setSessionCookie(res, session.token);
+  trackEvent('login', { userId: user.id, universityId: user.university_id, sessionId: session.id }, { method });
+  return user;
+}
+
 /* #2 GET /auth/domain?email= — always 200 */
 router.get(
   '/auth/domain',
@@ -121,25 +170,13 @@ router.post(
       throw new ApiError(503, 'mail_unavailable', MAIL_UNAVAILABLE_MESSAGE);
     }
     const university = previewUniversityForEmail(body.email);
-    const otp = issueOtp(body.email, body.inviteCode ? body.inviteCode.toUpperCase() : null);
-    try {
-      await getMailer().send(
-        body.email,
-        `${otp.code} is your ${APP_NAME} code`,
-        `Your ${APP_NAME} sign-in code is ${otp.code}. It expires in 10 minutes.\n\nIf you didn't ask for this, you can ignore this email.`,
-      );
-    } catch (err) {
-      if (err instanceof ApiError) throw err;
-      log.error('mailer failed', err);
-      throw new ApiError(503, 'mail_unavailable', MAIL_UNAVAILABLE_MESSAGE);
-    }
+    const otp = await sendSignInCode(body.email, body.inviteCode ? body.inviteCode.toUpperCase() : null);
     const out: AuthStartResponse = {
       email: body.email,
       university,
       expiresAt: otp.expiresAt,
       resendAvailableAt: otp.resendAvailableAt,
-      // Dev inbox: ONLY outside production AND only when no mail provider is configured. Never in production.
-      ...(config.env !== 'production' && !providerConfigured ? { devCode: otp.code } : {}),
+      ...devInbox(otp.code),
     };
     res.json(out);
   }),
@@ -157,10 +194,7 @@ router.post(
     // getUserByEmail never returns a deleted tombstone: a deleted account's address signs up again as a fresh account.
     const existing = getUserByEmail(body.email);
     if (existing) {
-      const user = applyStaffBootstrap(existing);
-      const session = createSession(user.id, req.get('user-agent'));
-      setSessionCookie(res, session.token);
-      trackEvent('login', { userId: user.id, universityId: user.university_id, sessionId: session.id });
+      const user = signIn(req, res, existing, 'code');
       const out: AuthVerifyResponse = { status: 'signed_in', user: toMeUser(user) };
       res.json(out);
       return;
@@ -288,6 +322,171 @@ router.post(
     if (req.user) revokeUserSockets(req.user.id, 'logout');
     clearSessionCookie(res);
     res.status(204).end();
+  }),
+);
+
+/* ─────────────── optional password sign-in + two-factor (DECISIONS D9) ─────────────── */
+
+const passwordSchema = z.string().min(1, 'Enter your password.').max(PASSWORD_MAX);
+const newPasswordSchema = z
+  .string()
+  .min(PASSWORD_MIN, `Use at least ${PASSWORD_MIN} characters.`)
+  .max(PASSWORD_MAX, `Use at most ${PASSWORD_MAX} characters.`);
+const codeSchema = z.string().trim().regex(/^\d{6}$/, 'Enter the 6-digit code.');
+
+const BAD_LOGIN = "That email and password don't match. Forgot it? Sign in with an email code instead.";
+
+/* POST /auth/password/login */
+router.post(
+  '/auth/password/login',
+  validate({ body: z.object({ email: emailSchema, password: passwordSchema }) }),
+  asyncHandler(async (req, res) => {
+    const { body } = typed<PasswordLoginRequest>(req);
+    assertEmailAcceptable(body.email);
+    const user = getUserByEmail(body.email);
+    const row = user ? getPasswordRow(user.id) : null;
+    // Unknown address, no password set and a wrong password all look the same (same status, same copy, one scrypt).
+    if (!user || !row) {
+      await burnPasswordCheck(body.password);
+      throw new ApiError(401, 'password_invalid', BAD_LOGIN);
+    }
+    if (!(await checkPassword(row, body.password))) throw new ApiError(401, 'password_invalid', BAD_LOGIN);
+
+    if (row.two_factor === 1) {
+      const otp = await sendSignInCode(user.email, null);
+      const challenge = issueLoginChallenge(user.id);
+      const out: PasswordLoginResponse = {
+        status: 'code_required',
+        challengeToken: challenge.token,
+        email: user.email,
+        expiresAt: Math.min(otp.expiresAt, challenge.expiresAt),
+        resendAvailableAt: otp.resendAvailableAt,
+        ...devInbox(otp.code),
+      };
+      res.json(out);
+      return;
+    }
+    const signedIn = signIn(req, res, user, 'password');
+    const out: PasswordLoginResponse = { status: 'signed_in', user: toMeUser(signedIn) };
+    res.json(out);
+  }),
+);
+
+/* POST /auth/password/verify — the emailed code after a correct password (two-factor on) */
+router.post(
+  '/auth/password/verify',
+  validate({ body: z.object({ challengeToken: z.string().min(10).max(200), code: codeSchema }) }),
+  asyncHandler((req, res) => {
+    const { body } = typed<PasswordCodeRequest>(req);
+    const challenge = readLoginChallenge(body.challengeToken);
+    const user = getUserRow(challenge.userId);
+    if (!user || user.status === 'deleted') throw new ApiError(401, 'challenge_invalid', 'That sign-in timed out. Enter your password again.');
+    consumeOtp(user.email, body.code);
+    consumeLoginChallenge(challenge.id);
+    const signedIn = signIn(req, res, user, 'password_2fa');
+    const out: AuthVerifyResponse = { status: 'signed_in', user: toMeUser(signedIn) };
+    res.json(out);
+  }),
+);
+
+/* POST /auth/password/resend — a fresh code for the same two-factor step (OTP resend limits apply) */
+router.post(
+  '/auth/password/resend',
+  validate({ body: z.object({ challengeToken: z.string().min(10).max(200) }) }),
+  asyncHandler(async (req, res) => {
+    const { body } = typed<PasswordCodeResendRequest>(req);
+    const challenge = readLoginChallenge(body.challengeToken);
+    const user = getUserRow(challenge.userId);
+    if (!user || user.status === 'deleted') throw new ApiError(401, 'challenge_invalid', 'That sign-in timed out. Enter your password again.');
+    const otp = await sendSignInCode(user.email, null);
+    const out: PasswordCodeResendResponse = { expiresAt: otp.expiresAt, resendAvailableAt: otp.resendAvailableAt, ...devInbox(otp.code) };
+    res.json(out);
+  }),
+);
+
+/** The current password must match before anything about it changes (same lockout as sign-in). */
+async function requireCurrentPassword(userId: Id, password: string | undefined): Promise<void> {
+  const row = getPasswordRow(userId);
+  if (!row) throw new ApiError(409, 'password_not_set', "You don't have a password yet.");
+  if (!password || !(await checkPassword(row, password))) {
+    throw new ApiError(403, 'password_incorrect', "That's not your current password.");
+  }
+}
+
+/* GET /me/security */
+router.get(
+  '/me/security',
+  requireAuth,
+  asyncHandler((req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    const out: SecuritySettings = securityOf(req.user!.id);
+    res.json(out);
+  }),
+);
+
+/* PUT /me/password — set a first password, or change it (current password required then) */
+router.put(
+  '/me/password',
+  requireAuth,
+  validate({ body: z.object({ currentPassword: passwordSchema.optional(), newPassword: newPasswordSchema }) }),
+  asyncHandler(async (req, res) => {
+    const { body } = typed<SetPasswordRequest>(req);
+    const user = req.user!;
+    enforceRateLimit(user, 'password_change');
+    const had = getPasswordRow(user.id) !== null;
+    if (had) await requireCurrentPassword(user.id, body.currentPassword);
+    const email = getUserRow(user.id)?.email ?? '';
+    assertPasswordAcceptable(body.newPassword, email);
+    await setPassword(user.id, body.newPassword);
+    // A new password signs every other device out; this one stays signed in.
+    revokeOtherSessions(user.id, req.sessionId);
+    audit({ actor: user, action: had ? 'password_changed' : 'password_set', targetType: 'user', targetId: user.id });
+    notifySecurityChange(email, had ? 'Your UniVerse password was changed.' : 'A password was added to your UniVerse account.');
+    const out: SecuritySettings = securityOf(user.id);
+    res.json(out);
+  }),
+);
+
+/* DELETE /me/password — back to email-code sign-in only */
+router.delete(
+  '/me/password',
+  requireAuth,
+  validate({ body: z.object({ currentPassword: passwordSchema }) }),
+  asyncHandler(async (req, res) => {
+    const { body } = typed<RemovePasswordRequest>(req);
+    const user = req.user!;
+    enforceRateLimit(user, 'password_change');
+    await requireCurrentPassword(user.id, body.currentPassword);
+    removePassword(user.id);
+    audit({ actor: user, action: 'password_removed', targetType: 'user', targetId: user.id });
+    const email = getUserRow(user.id)?.email ?? '';
+    notifySecurityChange(email, 'The password on your UniVerse account was removed. You now sign in with email codes only.');
+    const out: SecuritySettings = securityOf(user.id);
+    res.json(out);
+  }),
+);
+
+/* PUT /me/two-factor — needs a password, and the current password to change it */
+router.put(
+  '/me/two-factor',
+  requireAuth,
+  validate({ body: z.object({ enabled: z.boolean(), currentPassword: passwordSchema }) }),
+  asyncHandler(async (req, res) => {
+    const { body } = typed<TwoFactorRequest>(req);
+    const user = req.user!;
+    enforceRateLimit(user, 'password_change');
+    await requireCurrentPassword(user.id, body.currentPassword);
+    setTwoFactor(user.id, body.enabled);
+    audit({ actor: user, action: body.enabled ? 'two_factor_on' : 'two_factor_off', targetType: 'user', targetId: user.id });
+    const email = getUserRow(user.id)?.email ?? '';
+    notifySecurityChange(
+      email,
+      body.enabled
+        ? 'Two-step sign-in is on: signing in with your password now also needs a code sent to this email.'
+        : 'Two-step sign-in was turned off on your UniVerse account.',
+    );
+    const out: SecuritySettings = securityOf(user.id);
+    res.json(out);
   }),
 );
 

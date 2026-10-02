@@ -13,7 +13,8 @@ trying it with actual students.
 
 | Area | Status |
 |---|---|
-| University-email sign-up (6-digit code, no passwords) | ✅ Personal and disposable emails refused; unknown colleges auto-created |
+| University-email sign-up (6-digit code) | ✅ Personal and disposable emails refused; unknown colleges auto-created |
+| Optional password + two-step sign-in (Settings → Password & sign-in, D9) | ✅ Email codes still always work |
 | Onboarding (email → code → profile → guidelines → follow suggestions) | ✅ |
 | Home: **Reels · Buzz · Orbit**, swipeable like TikTok | ✅ |
 | Reels (≤60 s, enforced by the server) — upload, likes, comments, share | ✅ 12 seeded demo videos |

@@ -398,6 +398,9 @@ router.delete(
       prep('DELETE FROM notifications WHERE user_id = ? OR actor_id = ?').run(user.id, user.id);
       prep('DELETE FROM public_activity WHERE user_id = ?').run(user.id);
       prep('DELETE FROM waitlist WHERE user_id = ?').run(user.id);
+      // A deleted account keeps no sign-in secret (D9): the password and any pending two-factor step go with it.
+      prep('DELETE FROM user_passwords WHERE user_id = ?').run(user.id);
+      prep('DELETE FROM login_challenges WHERE user_id = ?').run(user.id);
       revokeAllSessions(user.id);
     });
     revokeUserSockets(user.id, 'deleted');

@@ -77,3 +77,8 @@ export function revokeSession(sessionId: Id): void {
 export function revokeAllSessions(userId: Id): void {
   prep('UPDATE sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL').run(now(), userId);
 }
+
+/** Signs every OTHER device out (after a password change); the current session stays. */
+export function revokeOtherSessions(userId: Id, keepSessionId: Id | null | undefined): void {
+  prep('UPDATE sessions SET revoked_at = ? WHERE user_id = ? AND id != ? AND revoked_at IS NULL').run(now(), userId, keepSessionId ?? '');
+}

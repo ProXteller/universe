@@ -1,9 +1,9 @@
 /**
- * Settings home (SPEC §5.10, design §7.9): Account · Notifications · Privacy & safety · Appearance · Invite friends ·
+ * Settings home (SPEC §5.10, design §7.9): Account (+ Password & sign-in, D9) · Notifications · Privacy & safety · Appearance · Invite friends ·
  * Account status · About · Trust & Safety (staff) · Sign out · Delete account (typed DELETE → foundation #20).
  */
 import { useState, type FC } from 'react';
-import { Bell, GraduationCap, Info, LogOut, Mail, Scale, Shield, ShieldCheck, Sparkles, Trash2, UserPen, UserPlus } from 'lucide-react';
+import { Bell, GraduationCap, Info, KeyRound, LogOut, Mail, Scale, Shield, ShieldCheck, Sparkles, Trash2, UserPen, UserPlus } from 'lucide-react';
 import { CATEGORY_LABELS } from '@shared/core';
 import { Button, Dialog, Input, ListRow, Switch, VerifiedBadge } from '@/ui';
 import { useScreenView } from '@/lib/analytics';
@@ -52,6 +52,13 @@ export const SettingsHome: FC = () => {
         />
         <ListRow leading={<RowIcon icon={GraduationCap} />} title="University" subtitle={me.university.name} />
         <ListRow leading={<RowIcon icon={UserPen} />} title="Edit profile" subtitle={`@${me.handle}`} to={routes.editProfile()} trailing="chevron" />
+        <ListRow
+          leading={<RowIcon icon={KeyRound} />}
+          title="Password & sign-in"
+          subtitle="Optional password, two-step sign-in"
+          to={routes.settings('security')}
+          trailing="chevron"
+        />
       </Group>
 
       <Group label="Preferences">
